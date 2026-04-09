@@ -25,7 +25,7 @@ def run_bot():
         print(msg)
         send_telegram(msg)
         
-        time.sleep(3600)  # ogni 1 ora
+        time.sleep(60)  # ogni 1 ora
 
 if __name__ == "__main__":
     run_bot()
