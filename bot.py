@@ -1,75 +1,51 @@
-import requests
-import time
-import sys
-
-# Forza la scrittura immediata dei log
-def log(msg):
-    print(msg, flush=True)
-
-# --- CONFIGURAZIONE ---
-API_KEY = "TUA_API_KEY"
-TOKEN = "TUO_TOKEN"
-CHAT_ID = "TUO_ID"
-
-log("🚀 GLOBAL SCANNER PRO (Major & Minor Leagues) AVVIATO...")
-
 def scansiona():
-    log("🔍 Scansione mercati globali in corso...")
+    # 1. Lista dei gruppi di campionati da scansionare
+    # 'soccer' copre i principali, 'upcoming' copre tutti i minori in arrivo
+    endpoints = ["soccer", "upcoming"]
     
-    # Endpoint che include tutti i campionati di calcio disponibili
-    url = "https://the-odds-api.com"
-    params = {
-        'apiKey': API_KEY,
-        'regions': 'eu',
-        'markets': 'h2h,totals',
-        'oddsFormat': 'decimal'
-    }
-    
-    try:
-        # Timeout aumentato a 40 secondi per i campionati minori (dati pesanti)
-        r = requests.get(url, params=params, timeout=40)
+    for endpoint in endpoints:
+        log(f"🔍 Scansione zona: {endpoint}...")
+        url = f"https://the-odds-api.com{endpoint}/odds/"
+        params = {
+            'apiKey': API_KEY,
+            'regions': 'eu',
+            'markets': 'h2h,totals',
+            'oddsFormat': 'decimal'
+        }
         
-        if r.status_code != 200:
-            log(f"❌ Errore API {r.status_code}: {r.text}")
-            return
+        try:
+            r = requests.get(url, params=params, timeout=30)
+            if r.status_code != 200:
+                log(f"❌ Errore API {endpoint}: {r.status_code}")
+                continue
 
-        data = r.json()
-        counter = 0
-        
-        for match in data:
-            home = match.get('home_team')
-            away = match.get('away_team')
-            league = match.get('sport_title')
-            
-            for bookie in match.get('bookmakers', []):
-                for market in bookie.get('markets', []):
-                    for out in market.get('outcomes', []):
-                        price = out.get('price')
-                        
-                        # FILTRO 1.20 - 1.50
-                        if 1.20 <= price <= 1.50:
-                            label = out.get('name')
-                            if market['key'] == 'totals':
-                                label = f"Over {out.get('point')} Gol"
-                            
-                            msg = (f"🌍 **GLOBAL SAFE BET**\n"
-                                   f"🏆 {league}\n"
-                                   f"⚽ {home} - {away}\n"
-                                   f"🎯 {label} @{price}\n"
-                                   f"🏛️ {bookie['title']}")
-                            
-                            # Invio Telegram
-                            t_url = f"https://telegram.org{TOKEN}/sendMessage"
-                            requests.post(t_url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-                            counter += 1
-        
-        log(f"✅ Scansione completata. Segnali inviati: {counter}")
+            try:
+                data = r.json()
+            except:
+                log(f"⚠️ Risposta {endpoint} non valida. Salto zona.")
+                continue
 
-    except Exception as e:
-        log(f"⚠️ Errore tecnico: {e}")
+            counter = 0
+            for match in data:
+                home = match.get('home_team')
+                away = match.get('away_team')
+                league = match.get('sport_title')
+                
+                for bookie in match.get('bookmakers', []):
+                    for market in bookie.get('markets', []):
+                        for out in market.get('outcomes', []):
+                            if 1.20 <= out.get('price', 0) <= 1.50:
+                                label = out.get('name')
+                                if market['key'] == 'totals':
+                                    label = f"Over {out.get('point')} Gol"
+                                
+                                msg = f"🌍 **GLOBAL SAFE**\n🏆 {league}\n⚽ {home}-{away}\n🎯 {label} @{out['price']}"
+                                requests.post(f"https://telegram.org{TOKEN}/sendMessage", 
+                                              json={"chat_id": CHAT_ID, "text": msg})
+                                counter += 1
+            log(f"✅ Zona {endpoint} completata. Segnali: {counter}")
+            # Piccola pausa tra una zona e l'altra per non stressare l'API
+            time.sleep(2)
 
-# Ciclo ogni 30 minuti per non saturare i crediti
-while True:
-    scansiona()
-    log("💤 Pausa 30 minuti...")
-    time.sleep(1800)
+        except Exception as e:
+            log(f"⚠️ Errore tecnico zona {endpoint}: {e}")
