@@ -1,24 +1,18 @@
-import requests
-import time
-import sys
-
-def log(msg):
-    print(msg)
-    sys.stdout.flush()
-
-# --- CONFIGURAZIONE ---
-API_KEY = "LA_TUA_API_KEY"
-TOKEN = "IL_TUO_TOKEN"
-CHAT_ID = "IL_TUO_ID"
-
-log("🌍 GLOBAL SCANNER (1.20-1.50) AVVIATO...")
-
 def analizza_tutti_i_campionati():
-    # 'upcoming' recupera i match di tutte le leghe coperte dal tuo piano API
-    url = f"https://the-odds-api.com{API_KEY}&regions=eu&markets=h2h,totals&oddsFormat=decimal"
+    url = "https://the-odds-api.com"
+    
+    # Parametri separati per evitare errori di "parsing" (scelta chirurgica)
+    params = {
+        'apiKey': API_KEY,
+        'regions': 'eu',
+        'markets': 'h2h,totals',
+        'oddsFormat': 'decimal'
+    }
     
     try:
-        response = requests.get(url)
+        log("🔍 Controllo mercati in corso...")
+        response = requests.get(url, params=params, timeout=15)
+        
         if response.status_code != 200:
             log(f"❌ Errore API ({response.status_code}): {response.text}")
             return
@@ -33,43 +27,21 @@ def analizza_tutti_i_campionati():
             
             for bookie in match.get('bookmakers', []):
                 for market in bookie.get('markets', []):
-                    
-                    # 1. ESITO FINALE (Vittoria casa/trasferta)
+                    # Filtro Esito Finale (1.20 - 1.50)
                     if market['key'] == 'h2h':
                         for outcome in market['outcomes']:
                             if 1.20 <= outcome['price'] <= 1.50:
                                 invia_segnalazione(league, home, away, f"Vittoria {outcome['name']}", outcome['price'], bookie['title'])
                                 match_trovati += 1
-
-                    # 2. OVER 1.5 o 2.5 (Gol totali)
+                                
+                    # Filtro Over (1.20 - 1.50)
                     if market['key'] == 'totals':
-                        for outcome in market['outcomes']:
+                        for outcome in market.get('outcomes', []):
                             if outcome['name'] == 'Over' and 1.20 <= outcome['price'] <= 1.50:
-                                label = f"Over {outcome['point']} Gol"
-                                invia_segnalazione(league, home, away, label, outcome['price'], bookie['title'])
+                                invia_segnalazione(league, home, away, f"Over {outcome['point']}", outcome['price'], bookie['title'])
                                 match_trovati += 1
 
-        log(f"✅ Scansione terminata. Segnali inviati: {match_trovati}")
+        log(f"✅ Scansione completata. Segnali inviati: {match_trovati}")
 
     except Exception as e:
-        log(f"⚠️ Errore critico: {e}")
-
-def invia_segnalazione(league, home, away, mercato, quota, bookie):
-    msg = (f"📍 **NUOVA OPPORTUNITÀ**\n"
-           f"🏆 {league}\n"
-           f"⚽ {home} - {away}\n"
-           f"🎯 Segno: {mercato}\n"
-           f"💰 Quota: {quota}\n"
-           f"🏛️ Bookie: {bookie}")
-    
-    url = f"https://telegram.org{TOKEN}/sendMessage"
-    try:
-        requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-    except:
-        log("❌ Fallito invio messaggio Telegram")
-
-# Ciclo di scansione ogni 2 ore (ottimale per i campionati minori e risparmio API)
-while True:
-    analizza_tutti_i_campionati()
-    log("💤 In attesa della prossima scansione...")
-    time.sleep(7200) 
+        log(f"⚠️ Errore durante la scansione: {e}")
