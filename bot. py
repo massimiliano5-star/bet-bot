@@ -1,70 +1,36 @@
+import os
 import requests
 import time
-import os
 
-# 🔑 PRENDI VARIABILI DA RAILWAY
-API_KEY = os.getenv("ODDS_API_KEY")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-# --- INIZIO BLOCCO TEST ---
-print(f"Tentativo invio test a Telegram (ID: {CHAT_ID})...")
-try:
-    test_url = f"https://telegram.org{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": "🚀 BOT ONLINE! Il tunnel Railway -> Telegram funziona."}
-    r = requests.post(test_url, json=payload)
-    print(f"Risultato test: {r.status_code} - {r.text}")
-except Exception as e:
-    print(f"Errore tecnico nell'invio: {e}")
-# --- FINE BLOCCO TEST ---
+# --- CONFIGURAZIONE DIRETTA ---
+API_KEY = "f0eaec5e8d2b7e2c0598b311b9e9aa32"
+TELEGRAM_TOKEN = "8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU"
+CHAT_ID = "545852688"
 
-def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={
-        "chat_id": CHAT_ID,
-        "text": msg
-    })
+def invia_messaggio(testo):
+    url = f"https://telegram.org{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": testo}
+    try:
+        r = requests.post(url, json=payload)
+        print(f"Log Telegram: {r.status_code} - {r.text}")
+    except Exception as e:
+        print(f"Errore invio: {e}")
 
-def get_matches():
-    url = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={API_KEY}&regions=eu&markets=h2h"
-    res = requests.get(url)
-    return res.json()
+# --- TEST IMMEDIATO ALL'AVVIO ---
+print("🚀 AVVIO BOT IN CORSO...")
+invia_messaggio("✅ TEST FERROVIARIO: Il bot è online e ti legge!")
 
-def find_value_bets(matches):
-    results = []
+# --- CICLO DI RICERCA (SIMPLIFICATO) ---
+while True:
+    print("🤖 Sto cercando scommesse...")
     
-    for m in matches:
-        try:
-            odds = m["bookmakers"][0]["markets"][0]["outcomes"]
-            home = odds[0]
-            
-            quota = home["price"]
-            prob = (1 / quota) + 0.08
-            
-            if prob > (1 / quota) and quota < 1.80:
-                match = f"{m['home_team']} vs {m['away_team']}"
-                results.append(f"🔥 VALUE BET\n{match}\nQuota: {quota}")
-        except:
-            continue
+    # Esempio chiamata API per vedere se risponde
+    url_api = f"https://the-odds-api.com{API_KEY}"
+    response = requests.get(url_api)
     
-    return results
-
-def run_bot():
-    while True:
-        try:
-            matches = get_matches()
-            bets = find_value_bets(matches)
-
-            if bets:
-                for b in bets[:5]:
-                    send_telegram(b)
-            else:
-                send_telegram("❌ Nessuna value bet trovata")
-
-            time.sleep(3600)
-
-        except Exception as e:
-            print("Errore:", e)
-            time.sleep(60)
-
-if __name__ == "__main__":
-    run_bot()
+    if response.status_code == 200:
+        print("✅ API Odds: Collegamento OK!")
+    else:
+        print(f"❌ API Odds: Errore {response.status_code}")
+    
+    time.sleep(60) # Aspetta 1 minuto
