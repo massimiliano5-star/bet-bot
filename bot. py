@@ -6,6 +6,16 @@ import os
 API_KEY = os.getenv("ODDS_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+# --- INIZIO BLOCCO TEST ---
+print(f"Tentativo invio test a Telegram (ID: {CHAT_ID})...")
+try:
+    test_url = f"https://telegram.org{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": "🚀 BOT ONLINE! Il tunnel Railway -> Telegram funziona."}
+    r = requests.post(test_url, json=payload)
+    print(f"Risultato test: {r.status_code} - {r.text}")
+except Exception as e:
+    print(f"Errore tecnico nell'invio: {e}")
+# --- FINE BLOCCO TEST ---
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
