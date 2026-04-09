@@ -1,43 +1,23 @@
-
-print("--- SISTEMA OPERATIVO E AVVIATO ---")
-
 def analizza_live():
-    # URL semplificato: chiediamo solo i Totali (Over/Under) che sono quelli che ti interessano
-    url = f"https://the-odds-api.com{API_KEY}&regions=eu&markets=totals&oddsFormat=decimal"
+    # URL ultra-semplice per testare se l'API ti risponde
+    url = f"https://the-odds-api.com{API_KEY}"
     
     try:
-        print("🔍 Controllo mercati live...")
+        print("🔍 Tentativo di connessione API...")
         response = requests.get(url)
         
-        # Se l'API risponde con un errore di autorizzazione o piano
-        if response.status_code != 200:
-            print(f"❌ Errore API ({response.status_code}): {response.text}")
-            return
-
-        data = response.json()
+        # Stampiamo lo stato per capire se la chiave è valida
+        print(f"📡 Stato API: {response.status_code}")
         
-        # Se non ci sono partite in questo momento
-        if not data:
-            print("pessimo tempismo: nessun match trovato ora.")
-            return
-
-        for match in data:
-            home = match.get('home_team')
-            away = match.get('away_team')
-            
-            for bookie in match.get('bookmakers', []):
-                for market in bookie.get('markets', []):
-                    if market['key'] == 'totals':
-                        for outcome in market.get('outcomes', []):
-                            # Filtro: Over tra 1.80 e 2.50
-                            if outcome['name'] == 'Over' and 1.80 <= outcome['price'] <= 2.50:
-                                msg = (f"⚽ **LIVE SIGNAL**\n"
-                                       f"🏟️ {home} - {away}\n"
-                                       f"📈 {outcome['name']} {outcome['point']}\n"
-                                       f"💰 Quota: {outcome['price']}\n"
-                                       f"🏛️ {bookie['title']}")
-                                invia_telegram(msg)
-                                print(f"✅ Segnale inviato per {home}")
+        if response.status_code == 200:
+            print("✅ Connessione OK! Il tuo piano API funziona.")
+            # Se arriviamo qui, possiamo rimettere la logica dei gol
+        elif response.status_code == 401:
+            print("❌ Errore: API_KEY non valida!")
+        elif response.status_code == 429:
+            print("❌ Errore: Hai finito i crediti gratuiti!")
+        else:
+            print(f"❌ Errore sconosciuto: {response.text}")
 
     except Exception as e:
-        print(f"⚠️ Errore critico: {e}")
+        print(f"⚠️ Errore di rete: {e}")
