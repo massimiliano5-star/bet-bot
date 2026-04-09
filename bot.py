@@ -2,7 +2,6 @@ import requests
 import time
 import sys
 
-# Forza l'output immediato per evitare il blocco "Starting Container"
 def log(msg):
     print(msg, flush=True)
 
@@ -11,11 +10,10 @@ API_KEY = "LA_TUA_API_KEY"
 TOKEN = "IL_TUO_TOKEN"
 CHAT_ID = "IL_TUO_ID"
 
-log("🚀 GLOBAL SCANNER 4.0 - AVVIO IN CORSO...")
+log("🚀 GLOBAL SCANNER 5.0 - MODALITÀ SICURA")
 
-def scansiona():
-    # Usiamo l'endpoint 'upcoming' che è il più leggero per i campionati minori
-    url = "https://the-odds-api.com"
+def analizza_lega(sport_key):
+    url = f"https://the-odds-api.com{sport_key}/odds/"
     params = {
         'apiKey': API_KEY,
         'regions': 'eu',
@@ -24,49 +22,37 @@ def scansiona():
     }
     
     try:
-        log("🔍 Scansione mercati mondiali...")
-        # Timeout corto per non far bloccare il container
-        r = requests.get(url, params=params, timeout=15)
-        
+        r = requests.get(url, params=params, timeout=20)
         if r.status_code != 200:
-            log(f"❌ Errore API: {r.status_code}")
-            return
+            return 0
 
         data = r.json()
         counter = 0
-        
         for match in data:
-            home = match.get('home_team')
-            away = match.get('away_team')
-            league = match.get('sport_title')
-            
             for bookie in match.get('bookmakers', []):
                 for market in bookie.get('markets', []):
                     for out in market.get('outcomes', []):
-                        price = out.get('price', 0)
-                        
-                        # FILTRO QUOTA 1.20 - 1.50
-                        if 1.20 <= price <= 1.50:
-                            label = out.get('name')
-                            if market['key'] == 'totals':
-                                label = f"Over {out.get('point')} Gol"
-                            
-                            msg = f"🌍 **GLOBAL SAFE**\n🏆 {league}\n⚽ {home}-{away}\n🎯 {label} @{price}"
-                            
-                            # Invio immediato
-                            requests.post(f"https://telegram.org{TOKEN}/sendMessage", 
-                                          json={"chat_id": CHAT_ID, "text": msg})
+                        if 1.20 <= out.get('price', 0) <= 1.50:
+                            msg = f"🌍 **BET**\n🏆 {match['sport_title']}\n⚽ {match['home_team']}-{match['away_team']}\n🎯 {out['name']} @{out['price']}"
+                            requests.post(f"https://telegram.org{TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": msg})
                             counter += 1
-                            # Piccola pausa per non saturare la banda di Railway
-                            time.sleep(0.5)
+        return counter
+    except:
+        return 0
 
-        log(f"✅ Scansione completata. Segnali: {counter}")
+def scansiona_mondo():
+    # Lista di gruppi "sicuri" che includono campionati maggiori e minori
+    categorie = ["soccer_epl", "soccer_italy_serie_a", "soccer_spain_la_liga", "soccer_germany_bundesliga", "soccer_france_ligue_1", "soccer_uefa_champs_league"]
+    
+    totale = 0
+    for lega in categorie:
+        log(f"🔍 Scansione: {lega}...")
+        totale += analizza_lega(lega)
+        time.sleep(2) # Pausa di sicurezza tra le leghe
+    
+    log(f"✅ Scansione completata. Segnali totali: {totale}")
 
-    except Exception as e:
-        log(f"⚠️ Errore: {e}")
-
-# --- LOOP ---
 while True:
-    scansiona()
-    log("💤 Pausa 30 min...")
-    time.sleep(1800)
+    scansiona_mondo()
+    log("💤 Pausa 1 ora per risparmio crediti...")
+    time.sleep(3600)
