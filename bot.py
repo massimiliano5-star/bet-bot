@@ -1,23 +1,29 @@
-def analizza_live():
-    # URL ultra-semplice per testare se l'API ti risponde
-    url = f"https://the-odds-api.com{API_KEY}"
-    
-    try:
-        print("🔍 Tentativo di connessione API...")
-        response = requests.get(url)
-        
-        # Stampiamo lo stato per capire se la chiave è valida
-        print(f"📡 Stato API: {response.status_code}")
-        
-        if response.status_code == 200:
-            print("✅ Connessione OK! Il tuo piano API funziona.")
-            # Se arriviamo qui, possiamo rimettere la logica dei gol
-        elif response.status_code == 401:
-            print("❌ Errore: API_KEY non valida!")
-        elif response.status_code == 429:
-            print("❌ Errore: Hai finito i crediti gratuiti!")
-        else:
-            print(f"❌ Errore sconosciuto: {response.text}")
+import os
+import requests
+import time
+import sys
 
+# Forza l'output immediato
+def log(msg):
+    print(msg)
+    sys.stdout.flush()
+
+# CONFIGURAZIONE (Usa le variabili che hai messo su Railway o scrivile qui)
+TOKEN = "IL_TUO_TELEGRAM_TOKEN"
+CHAT_ID = "IL_TUO_CHAT_ID"
+
+log("🚀 TENTATIVO DI AVVIO...")
+
+def test_telegram():
+    url = f"https://telegram.org{TOKEN}/sendMessage"
+    try:
+        r = requests.post(url, json={"chat_id": CHAT_ID, "text": "✅ BOT SVEGLIO! Railway è connesso."})
+        log(f"Risultato test Telegram: {r.status_code}")
     except Exception as e:
-        print(f"⚠️ Errore di rete: {e}")
+        log(f"Errore test: {e}")
+
+test_telegram()
+
+while True:
+    log("🤖 Bot in attesa di scommesse live...")
+    time.sleep(60)
