@@ -2,52 +2,78 @@ import requests
 import time
 import sys
 
-# Forza la scrittura immediata dei log
+# Forza la scrittura immediata dei log su Railway
 def log(msg):
     print(msg, flush=True)
 
-# --- CONFIGURAZIONE ---
-API_KEY = "TUA_API_KEY"
-TOKEN = "TUO_TOKEN"
-CHAT_ID = "TUO_ID"
+# --- CONFIGURAZIONE (Inserisci i tuoi dati tra le virgolette) ---
+API_KEY = "LA_TUA_API_KEY"
+TOKEN = "IL_TUO_TELEGRAM_TOKEN"
+CHAT_ID = "IL_TUO_CHAT_ID"
 
-log("🚀 --- BOT IN FASE DI AVVIO ---")
+log("🚀 SCANNER DEFINITIVO (1.20-1.50) AVVIATO...")
 
 def scansiona():
-    log("🔍 Controllo mercati in corso...")
+    log("🔍 Analisi mercati pre-match in corso...")
     url = "https://the-odds-api.com"
     params = {
         'apiKey': API_KEY,
         'regions': 'eu',
-        'markets': 'h2h',
+        'markets': 'h2h,totals',
         'oddsFormat': 'decimal'
     }
     
     try:
-        r = requests.get(url, params=params, timeout=20)
-        log(f"📡 Risposta API: {r.status_code}")
+        r = requests.get(url, params=params, timeout=25)
         
-        if r.status_code == 200:
-            data = r.json()
-            counter = 0
-            for m in data:
-                for b in m.get('bookmakers', []):
-                    for mk in b.get('markets', []):
-                        for out in mk.get('outcomes', []):
-                            if 1.20 <= out['price'] <= 1.50:
-                                t_url = f"https://telegram.org{TOKEN}/sendMessage"
-                                msg = f"⚽ SAFE BET: {m['home_team']}-{m['away_team']} @{out['price']}"
-                                requests.post(t_url, json={"chat_id": CHAT_ID, "text": msg})
-                                counter += 1
-            log(f"✅ Scansione finita. Segnali: {counter}")
-        else:
-            log(f"❌ Errore API: {r.text}")
+        if r.status_code != 200:
+            log(f"❌ Errore API: {r.status_code}")
+            return
+
+        data = r.json()
+        counter = 0
+        
+        for match in data:
+            home = match.get('home_team')
+            away = match.get('away_team')
+            league = match.get('sport_title')
+            
+            for bookie in match.get('bookmakers', []):
+                for market in bookie.get('markets', []):
+                    for outcome in market.get('outcomes', []):
+                        
+                        price = outcome.get('price')
+                        
+                        # --- FILTRO QUOTA 1.20 - 1.50 ---
+                        if 1.20 <= price <= 1.50:
+                            # Formattazione del nome del mercato
+                            name = outcome.get('name')
+                            if market['key'] == 'totals':
+                                # Esempio: Over 1.5
+                                label = f"{name} {outcome.get('point')} Gol"
+                            else:
+                                # Esempio: Vittoria Team A
+                                label = f"Esito: {name}"
+
+                            # Invia a Telegram
+                            msg = (f"💎 **SAFE BET TROVATA**\n"
+                                   f"🏆 {league}\n"
+                                   f"⚽ {home} - {away}\n"
+                                   f"🎯 {label}\n"
+                                   f"💰 Quota: {price}\n"
+                                   f"🏛️ Bookmaker: {bookie['title']}")
+                            
+                            t_url = f"https://telegram.org{TOKEN}/sendMessage"
+                            requests.post(t_url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+                            counter += 1
+        
+        log(f"✅ Scansione completata. Segnali inviati: {counter}")
 
     except Exception as e:
-        log(f"⚠️ Errore tecnico: {e}")
+        log(f"⚠️ Errore tecnico durante la scansione: {e}")
 
-# Ciclo infinito
+# --- LOOP DI ESECUZIONE OGNI 30 MINUTI ---
 while True:
     scansiona()
-    log("💤 Pausa di 1 ora...")
-    time.sleep(3600)
+    log("💤 Pausa di 30 minuti prima del prossimo controllo...")
+    time.sleep(1800) 
