@@ -1,29 +1,30 @@
-import os
 import requests
 import time
 import sys
 
-# Forza l'output immediato
 def log(msg):
     print(msg)
     sys.stdout.flush()
 
-# CONFIGURAZIONE (Usa le variabili che hai messo su Railway o scrivile qui)
-TOKEN = "IL_TUO_TELEGRAM_TOKEN"
+# --- CONFIGURAZIONE ---
+TOKEN = "IL_TUO_TOKEN"
 CHAT_ID = "IL_TUO_CHAT_ID"
+API_KEY = "LA_TUA_API_KEY"
 
-log("🚀 TENTATIVO DI AVVIO...")
+log("🚀 AVVIO IN CORSO...")
 
-def test_telegram():
+def invia_test():
     url = f"https://telegram.org{TOKEN}/sendMessage"
     try:
-        r = requests.post(url, json={"chat_id": CHAT_ID, "text": "✅ BOT SVEGLIO! Railway è connesso."})
-        log(f"Risultato test Telegram: {r.status_code}")
+        # Timeout di 10 secondi per non bloccare il bot
+        r = requests.post(url, json={"chat_id": CHAT_ID, "text": "✅ BOT LIVE"}, timeout=10)
+        log(f"📡 Risultato Telegram: {r.status_code}")
     except Exception as e:
-        log(f"Errore test: {e}")
+        log(f"❌ Errore Connessione: {e}")
 
-test_telegram()
+invia_test()
 
 while True:
-    log("🤖 Bot in attesa di scommesse live...")
+    log("🔍 Scansione mercati live...")
+    # Qui inseriremo la logica dei gol appena il test passa
     time.sleep(60)
