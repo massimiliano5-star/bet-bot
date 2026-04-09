@@ -1,47 +1,53 @@
+import requests
+import time
+import sys
+
+# Forza la scrittura immediata dei log
+def log(msg):
+    print(msg, flush=True)
+
+# --- CONFIGURAZIONE ---
+API_KEY = "TUA_API_KEY"
+TOKEN = "TUO_TOKEN"
+CHAT_ID = "TUO_ID"
+
+log("🚀 --- BOT IN FASE DI AVVIO ---")
+
 def scansiona():
+    log("🔍 Controllo mercati in corso...")
     url = "https://the-odds-api.com"
     params = {
         'apiKey': API_KEY,
         'regions': 'eu',
-        'markets': 'h2h', # Iniziamo solo con questo per testare
+        'markets': 'h2h',
         'oddsFormat': 'decimal'
     }
     
     try:
-        log("🔍 Analisi campionati in corso...")
         r = requests.get(url, params=params, timeout=20)
+        log(f"📡 Risposta API: {r.status_code}")
         
-        # DEBUG: Se non è 200, stampiamo il motivo esatto
-        if r.status_code != 200:
-            log(f"❌ Errore API {r.status_code}: {r.text}")
-            return
-
-        # Tentativo di lettura JSON sicuro
-        try:
-            matches = r.json()
-        except Exception:
-            log("❌ L'API non ha restituito un JSON valido.")
-            return
-
-        if not matches:
-            log("pessimo tempismo: Nessun match trovato al momento.")
-            return
-
-        counter = 0
-        for m in matches:
-            home = m.get('home_team')
-            away = m.get('away_team')
-            for b in m.get('bookmakers', []):
-                for market in b.get('markets', []):
-                    for out in market.get('outcomes', []):
-                        if 1.20 <= out['price'] <= 1.50:
-                            # INVIO TELEGRAM
-                            msg = f"⚽ **SAFE BET**\n🏆 {m.get('sport_title')}\n🏟️ {home}-{away}\n🎯 {out['name']} @{out['price']}"
-                            requests.post(f"https://telegram.org{TOKEN}/sendMessage", 
-                                          json={"chat_id": CHAT_ID, "text": msg})
-                            counter += 1
-        
-        log(f"✅ Scansione completata. Segnali: {counter}")
+        if r.status_code == 200:
+            data = r.json()
+            counter = 0
+            for m in data:
+                for b in m.get('bookmakers', []):
+                    for mk in b.get('markets', []):
+                        for out in mk.get('outcomes', []):
+                            if 1.20 <= out['price'] <= 1.50:
+                                t_url = f"https://telegram.org{TOKEN}/sendMessage"
+                                msg = f"⚽ SAFE BET: {m['home_team']}-{m['away_team']} @{out['price']}"
+                                requests.post(t_url, json={"chat_id": CHAT_ID, "text": msg})
+                                counter += 1
+            log(f"✅ Scansione finita. Segnali: {counter}")
+        else:
+            log(f"❌ Errore API: {r.text}")
 
     except Exception as e:
-        log(f"⚠️ Errore critico: {e}")
+        log(f"⚠️ Errore tecnico: {e}")
+
+# Ciclo infinito
+while True:
+    scansiona()
+    log("💤 Pausa di 1 ora...")
+    time.sleep(3600)
