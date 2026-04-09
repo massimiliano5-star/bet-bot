@@ -1,32 +1,27 @@
 import requests
 import time
 
-# Parametri già corretti (puoi usare così su Railway)
-TELEGRAM_TOKEN = "8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU"
-CHAT_ID = "545852688"
+import os
+
+TELEGRAM_TOKEN = os.getenv("8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU")
+CHAT_ID = os.getenv("545852688")
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU}/sendMessage"
-    try:
-        response = requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
-        if response.status_code != 200:
-            print("❌ Errore invio messaggio:", response.text)
-    except Exception as e:
-        print("❌ Eccezione durante invio Telegram:", e)
+    requests.post(url, data={"chat_id": 545852688, "text": msg})
 
 def run_bot():
-    # 🔥 Messaggio iniziale di test appena parte
-    send_telegram("✅ Bot partito correttamente!")
-    print("Bot partito e messaggio di test inviato.")
-
     while True:
-        # Messaggio di log continuo per mantenere il container attivo
-        msg = "🤖 Bot attivo! Sto cercando opportunità..."
-        print(msg)
-        send_telegram(msg)
+        try:
+            msg = "🤖 Bot attivo! Sto cercando opportunità..."
+            print(msg)
+            send_telegram(msg)
 
-        # Mantieni container attivo con sleep ragionevole
-        time.sleep(3600)  # ogni 1 ora
+            time.sleep(3600)  # ogni 1 ora
+
+        except Exception as e:
+            print("Errore:", e)
+            time.sleep(60)
 
 if __name__ == "__main__":
     run_bot()
