@@ -1,1 +1,60 @@
+import requests
+import time
+import os
 
+# 🔑 PRENDI VARIABILI DA RAILWAY
+API_KEY = os.getenv("ODDS_API_KEY")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+
+def send_telegram(msg):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, data={
+        "chat_id": CHAT_ID,
+        "text": msg
+    })
+
+def get_matches():
+    url = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={API_KEY}&regions=eu&markets=h2h"
+    res = requests.get(url)
+    return res.json()
+
+def find_value_bets(matches):
+    results = []
+    
+    for m in matches:
+        try:
+            odds = m["bookmakers"][0]["markets"][0]["outcomes"]
+            home = odds[0]
+            
+            quota = home["price"]
+            prob = (1 / quota) + 0.08
+            
+            if prob > (1 / quota) and quota < 1.80:
+                match = f"{m['home_team']} vs {m['away_team']}"
+                results.append(f"🔥 VALUE BET\n{match}\nQuota: {quota}")
+        except:
+            continue
+    
+    return results
+
+def run_bot():
+    while True:
+        try:
+            matches = get_matches()
+            bets = find_value_bets(matches)
+
+            if bets:
+                for b in bets[:5]:
+                    send_telegram(b)
+            else:
+                send_telegram("❌ Nessuna value bet trovata")
+
+            time.sleep(3600)
+
+        except Exception as e:
+            print("Errore:", e)
+            time.sleep(60)
+
+if __name__ == "__main__":
+    run_bot()
