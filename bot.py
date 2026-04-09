@@ -1,3 +1,6 @@
+
+print("--- SISTEMA OPERATIVO E AVVIATO ---")
+
 def analizza_live():
     # URL semplificato: chiediamo solo i Totali (Over/Under) che sono quelli che ti interessano
     url = f"https://the-odds-api.com{API_KEY}&regions=eu&markets=totals&oddsFormat=decimal"
