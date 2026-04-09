@@ -1,27 +1,32 @@
 import requests
 import time
-
 import os
 
 TELEGRAM_TOKEN = os.getenv("8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU")
 CHAT_ID = os.getenv("545852688")
 
 def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU}/sendMessage"
-    requests.post(url, data={"chat_id": 545852688, "text": msg})
+    try:
+        url = f"https://api.telegram.org/bot{8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU}/sendMessage"
+        
+        response = requests.post(url, data={
+            "chat_id":545852688,
+            "text": msg
+        })
+
+        print("Risposta Telegram:", response.text)
+
+    except Exception as e:
+        print("Errore invio Telegram:", e)
 
 def run_bot():
     while True:
-        try:
-            msg = "🤖 Bot attivo! Sto cercando opportunità..."
-            print(msg)
-            send_telegram(msg)
+        msg = "🤖 BOT ONLINE E FUNZIONANTE"
+        print(msg)
 
-            time.sleep(3600)  # ogni 1 ora
+        send_telegram(msg)
 
-        except Exception as e:
-            print("Errore:", e)
-            time.sleep(60)
+        time.sleep(60)  # ogni 60 secondi (per test)
 
 if __name__ == "__main__":
     run_bot()
