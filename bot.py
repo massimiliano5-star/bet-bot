@@ -7,31 +7,69 @@ def log(msg):
     sys.stdout.flush()
 
 # --- CONFIGURAZIONE ---
-# Incolla i tuoi dati ESATTAMENTE tra le virgolette
-TOKEN = "7917812030:AAEl7fOa_W_C977vjD_A_n9y8" # Usa il tuo token completo qui
-CHAT_ID = "6365922372" # Assicurati che sia il tuo ID numerico
-API_KEY = "LA_TUA_API_KEY_DI_THE_ODDS"
+API_KEY = "LA_TUA_API_KEY"
+TOKEN = "IL_TUO_TOKEN"
+CHAT_ID = "IL_TUO_ID"
 
-log("🚀 AVVIO IN CORSO...")
+log("🌍 GLOBAL SCANNER (1.20-1.50) AVVIATO...")
 
-def invia_test():
-    # URL costruito con lo slash corretto dopo 'bot'
-    url = f"https://telegram.org{TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": "✅ CONNESSIONE STABILITA! Il bot è ora configurato correttamente."}
+def analizza_tutti_i_campionati():
+    # 'upcoming' recupera i match di tutte le leghe coperte dal tuo piano API
+    url = f"https://the-odds-api.com{API_KEY}&regions=eu&markets=h2h,totals&oddsFormat=decimal"
     
     try:
-        r = requests.post(url, json=payload, timeout=15)
-        if r.status_code == 200:
-            log("📡 Telegram ha accettato il messaggio!")
-        else:
-            log(f"❌ Errore Telegram: {r.status_code} - {r.text}")
+        response = requests.get(url)
+        if response.status_code != 200:
+            log(f"❌ Errore API ({response.status_code}): {response.text}")
+            return
+            
+        data = response.json()
+        match_trovati = 0
+        
+        for match in data:
+            home = match.get('home_team')
+            away = match.get('away_team')
+            league = match.get('sport_title')
+            
+            for bookie in match.get('bookmakers', []):
+                for market in bookie.get('markets', []):
+                    
+                    # 1. ESITO FINALE (Vittoria casa/trasferta)
+                    if market['key'] == 'h2h':
+                        for outcome in market['outcomes']:
+                            if 1.20 <= outcome['price'] <= 1.50:
+                                invia_segnalazione(league, home, away, f"Vittoria {outcome['name']}", outcome['price'], bookie['title'])
+                                match_trovati += 1
+
+                    # 2. OVER 1.5 o 2.5 (Gol totali)
+                    if market['key'] == 'totals':
+                        for outcome in market['outcomes']:
+                            if outcome['name'] == 'Over' and 1.20 <= outcome['price'] <= 1.50:
+                                label = f"Over {outcome['point']} Gol"
+                                invia_segnalazione(league, home, away, label, outcome['price'], bookie['title'])
+                                match_trovati += 1
+
+        log(f"✅ Scansione terminata. Segnali inviati: {match_trovati}")
+
     except Exception as e:
-        log(f"⚠️ Errore di rete: {e}")
+        log(f"⚠️ Errore critico: {e}")
 
-# Eseguiamo il test subito
-invia_test()
+def invia_segnalazione(league, home, away, mercato, quota, bookie):
+    msg = (f"📍 **NUOVA OPPORTUNITÀ**\n"
+           f"🏆 {league}\n"
+           f"⚽ {home} - {away}\n"
+           f"🎯 Segno: {mercato}\n"
+           f"💰 Quota: {quota}\n"
+           f"🏛️ Bookie: {bookie}")
+    
+    url = f"https://telegram.org{TOKEN}/sendMessage"
+    try:
+        requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+    except:
+        log("❌ Fallito invio messaggio Telegram")
 
+# Ciclo di scansione ogni 2 ore (ottimale per i campionati minori e risparmio API)
 while True:
-    log("🔍 Scansione mercati live in corso...")
-    # Qui inseriremo la logica per i gol/corner una volta confermato il test
-    time.sleep(60)
+    analizza_tutti_i_campionati()
+    log("💤 In attesa della prossima scansione...")
+    time.sleep(7200) 
