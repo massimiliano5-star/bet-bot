@@ -1,7 +1,21 @@
-def analizza_tutti_i_campionati():
+import requests
+import time
+import sys
+
+# Forza l'uscita dei log
+def log(msg):
+    print(msg)
+    sys.stdout.flush()
+
+# --- CONFIGURAZIONE ---
+API_KEY = "LA_TUA_API_KEY"
+TOKEN = "IL_TUO_TOKEN"
+CHAT_ID = "IL_TUO_ID"
+
+log("🚀 SCANNER PRE-MATCH (1.20-1.50) INIZIALIZZATO...")
+
+def scansiona():
     url = "https://the-odds-api.com"
-    
-    # Parametri separati per evitare errori di "parsing" (scelta chirurgica)
     params = {
         'apiKey': API_KEY,
         'regions': 'eu',
@@ -10,38 +24,43 @@ def analizza_tutti_i_campionati():
     }
     
     try:
-        log("🔍 Controllo mercati in corso...")
-        response = requests.get(url, params=params, timeout=15)
+        log("🔍 Analisi campionati in corso...")
+        r = requests.get(url, params=params, timeout=20)
         
-        if response.status_code != 200:
-            log(f"❌ Errore API ({response.status_code}): {response.text}")
+        if r.status_code != 200:
+            log(f"❌ Errore API: {r.status_code}")
             return
-            
-        data = response.json()
-        match_trovati = 0
-        
-        for match in data:
-            home = match.get('home_team')
-            away = match.get('away_team')
-            league = match.get('sport_title')
-            
-            for bookie in match.get('bookmakers', []):
-                for market in bookie.get('markets', []):
-                    # Filtro Esito Finale (1.20 - 1.50)
-                    if market['key'] == 'h2h':
-                        for outcome in market['outcomes']:
-                            if 1.20 <= outcome['price'] <= 1.50:
-                                invia_segnalazione(league, home, away, f"Vittoria {outcome['name']}", outcome['price'], bookie['title'])
-                                match_trovati += 1
-                                
-                    # Filtro Over (1.20 - 1.50)
-                    if market['key'] == 'totals':
-                        for outcome in market.get('outcomes', []):
-                            if outcome['name'] == 'Over' and 1.20 <= outcome['price'] <= 1.50:
-                                invia_segnalazione(league, home, away, f"Over {outcome['point']}", outcome['price'], bookie['title'])
-                                match_trovati += 1
 
-        log(f"✅ Scansione completata. Segnali inviati: {match_trovati}")
+        matches = r.json()
+        counter = 0
+        
+        for m in matches:
+            home = m.get('home_team')
+            away = m.get('away_team')
+            league = m.get('sport_title')
+            
+            for b in m.get('bookmakers', []):
+                for market in b.get('markets', []):
+                    for out in market.get('outcomes', []):
+                        # FILTRO QUOTA 1.20 - 1.50
+                        if 1.20 <= out['price'] <= 1.50:
+                            msg = (f"⚽ **QUOTA TOP**\n"
+                                   f"🏆 {league}\n"
+                                   f"🏟️ {home} - {away}\n"
+                                   f"🎯 {out['name']} @{out['price']}\n"
+                                   f"🏛️ {b['title']}")
+                            
+                            t_url = f"https://telegram.org{TOKEN}/sendMessage"
+                            requests.post(t_url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+                            counter += 1
+        
+        log(f"✅ Fine scansione. Segnali inviati: {counter}")
 
     except Exception as e:
-        log(f"⚠️ Errore durante la scansione: {e}")
+        log(f"⚠️ Errore tecnico: {e}")
+
+# Ciclo ogni ora
+while True:
+    scansiona()
+    log("💤 Prossimo controllo tra 1 ora...")
+    time.sleep(3600)
