@@ -1,126 +1,128 @@
 import requests
 import time
+import datetime
+import pytz
 import os
-import json
-from datetime import datetime
 
-# =================================================================
-# CONFIGURAZIONE (DA RAILWAY VARIABLES)
-# =================================================================
-API_KEY_FOOTBALL = os.getenv("API_KEY_FOOTBALL")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+# ==========================================
+# ⚙️ CONFIGURAZIONE (INSERISCI I TUOI DATI)
+# ==========================================
+API_FOOTBALL_KEY = "LA_TUA_API_FOOTBALL_KEY" # Da ://api-football.com
+TELEGRAM_TOKEN = "IL_TUO_TELEGRAM_TOKEN"
+CHAT_ID = "IL_TUO_CHAT_ID"
 
-BANKROLL_INIZIALE = 50.0
-TARGET_GIORNALIERO = 150.0
-FILE_DATA = "bot_finanze.json"
+# ==========================================
+# 🧠 CORE ENGINE: ELITE SYSTEM V3
+# ==========================================
+class EliteBot:
+    def __init__(self):
+        self.bankroll = 50.0  # Partenza piano 50€
+        self.daily_loss = 0.0
+        self.stop_loss_limit = 0.15 # 15% Stop-loss
+        self.active_bet = None
+        self.last_update_id = 0
+        self.tz = pytz.timezone("Europe/Rome")
 
-def carica_dati():
-    default = {"bankroll": BANKROLL_INIZIALE, "daily_loss_count": 0, "last_trade_date": datetime.now().strftime("%Y-%m-%d")}
-    if not os.path.exists(FILE_DATA):
-        return default
-    try:
-        with open(FILE_DATA, "r") as f:
-            content = f.read().strip()
-            if not content: return default
-            return json.loads(content)
-    except:
-        return default
+    def send_msg(self, text):
+        url = f"https://telegram.org{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"})
 
-def salva_dati(dati):
-    try:
-        with open(FILE_DATA, "w") as f:
-            json.dump(dati, f, indent=4)
-    except Exception as e:
-        print(f"⚠️ Errore salvataggio: {e}")
-
-def send_tg(msg):
-    if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("❌ Variabili Telegram mancanti!")
-        return False
-    
-    # Pulizia totale del token
-    token = str(TELEGRAM_TOKEN).strip().replace("bot", "")
-    url = f"https://telegram.org{token}/sendMessage"
-    
-    try:
-        r = requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=20)
-        if r.status_code != 200:
-            print(f"❌ Telegram API Error: {r.text}")
-        return r.status_code == 200
-    except Exception as e:
-        print(f"❌ Errore connessione: {e}")
-        return False
-
-def analizza_dominio_reale(f_id):
-    url = f"https://api-sports.io{f_id}"
-    headers = {"x-apisports-key": API_KEY_FOOTBALL}
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-        data = r.json()
-        res = data.get('response', [])
-        if len(res) < 2: return None
+    # --- ANALISI STATISTICHE LIVE ---
+    def fetch_live_signals(self):
+        url = "https://api-sports.io"
+        headers = {'x-rapidapi-key': API_FOOTBALL_KEY}
         
-        def get_s(team_idx, name):
-            for s in res[team_idx]['statistics']:
-                if s['type'] == name: 
-                    val = str(s['value'] or "0").replace('%','')
-                    return int(val) if val.isdigit() else 0
-            return 0
-
-        h_tiri, a_tiri = get_s(0, 'Shots on Goal'), get_s(1, 'Shots on Goal')
-        h_att, a_att = get_s(0, 'Dangerous Attacks'), get_s(1, 'Dangerous Attacks')
-
-        if h_tiri >= a_tiri + 3 and h_att > a_att * 1.5: return {"side": "HOME", "name": "CASA"}
-        if a_tiri >= h_tiri + 3 and a_att > h_att * 1.5: return {"side": "AWAY", "name": "TRASFERTA"}
-        return None
-    except: return None
-
-def run_bot():
-    print("🚀 Avvio sistema ELITE...")
-    dati = carica_dati()
-    active_bet = None
-    
-    # Primo tentativo di contatto
-    if send_tg(f"🤖 **SISTEMA ELITE ONLINE**\n💰 Bankroll: {dati['bankroll']}€"):
-        print("✅ Telegram collegato!")
-    else:
-        print("❌ Fallimento Telegram. Controlla il Token su Railway.")
-
-    while True:
         try:
-            dati = carica_dati()
-            
-            if active_bet:
-                r = requests.get(f"https://api-sports.io{active_bet['id']}", headers={"x-apisports-key": API_KEY_FOOTBALL}, timeout=10)
-                res_list = r.json().get('response', [])
-                if res_list:
-                    res = res_list[0]
-                    if res['fixture']['status']['short'] in ['FT', 'AET', 'PEN']:
-                        g_h, g_a = res['goals']['home'], res['goals']['away']
-                        win = (active_bet['side'] == "HOME" and g_h > g_a) or (active_bet['side'] == "AWAY" and g_a > g_h)
-                        profit = round(active_bet['stake'] * 0.45, 2) if win else -active_bet['stake']
-                        dati['bankroll'] = round(dati['bankroll'] + profit, 2)
-                        send_tg(f"{'✅ WIN' if win else '❌ LOSS'}\n💰 Profitto: {profit}€\n🏦 Bank: {dati['bankroll']}€")
-                        active_bet = None
-                        salva_dati(dati)
-            else:
-                r = requests.get("https://api-sports.io", headers={"x-apisports-key": API_KEY_FOOTBALL}, timeout=10)
-                live_data = r.json().get('response', [])
-                for p in live_data:
-                    tempo = p['fixture']['status']['elapsed'] or 0
-                    if 25 <= tempo <= 75:
-                        analisi = analizza_dominio_reale(p['fixture']['id'])
-                        if analisi:
-                            stake = round(dati['bankroll'] * 0.10, 2) if dati['bankroll'] < 500 else round(dati['bankroll'] * 0.05, 2)
-                            active_bet = {"id": p['fixture']['id'], "side": analisi['side'], "stake": stake, "odd": 1.45}
-                            send_tg(f"🔥 **SEGNALE**\n⚽ {p['teams']['home']['name']} - {p['teams']['away']['name']}\n🎯 Puntata: {analisi['name']}\n💰 Stake: {stake}€")
-                            break
+            res = requests.get(url, headers=headers).json()
+            for f in res.get('response', []):
+                # Estrazione stats
+                stats = f.get('statistics', [])
+                if len(stats) < 2: continue
+                
+                h_shots = self._get_stat(stats[0], 'Shots on Goal')
+                a_shots = self._get_stat(stats[1], 'Shots on Goal')
+                h_name = f['teams']['home']['name']
+                a_name = f['teams']['away']['name']
+                score = f['goals']
 
-            time.sleep(300)
+                # FILTRO ELITE: Dominio netto ma pareggio/svantaggio
+                if h_shots >= 5 and score['home'] <= score['away']:
+                    return {"match": f"{h_name} vs {a_name}", "pick": h_name, "reason": f"🔥 DOMINIO: {h_shots} tiri in porta"}
+                if a_shots >= 5 and score['away'] <= score['home']:
+                    return {"match": f"{h_name} vs {a_name}", "pick": a_name, "reason": f"🔥 DOMINIO: {a_shots} tiri in porta"}
         except Exception as e:
-            print(f"⚠️ Errore loop: {e}")
-            time.sleep(60)
+            print(f"Errore API: {e}")
+        return None
 
-if __name__ == "__main__":
-    run_bot()
+    def _get_stat(self, team_stats, stat_name):
+        for s in team_stats['statistics']:
+            if s['type'] == stat_name: return int(s['value'] or 0)
+        return 0
+
+    # --- GESTIONE MONEY MANAGEMENT ---
+    def get_stake(self):
+        # Piano di crescita accelerato
+        if self.bankroll < 200: return round(self.bankroll * 0.10, 2) # 10% per scalare
+        if self.bankroll < 1000: return round(self.bankroll * 0.07, 2) # 7% consolidamento
+        return round(self.bankroll * 0.05, 2) # 5% regime (target 150€/giorno)
+
+    def handle_tg(self):
+        url = f"https://telegram.org{TELEGRAM_TOKEN}/getUpdates?offset={self.last_update_id + 1}"
+        try:
+            updates = requests.get(url).json().get("result", [])
+            for u in updates:
+                self.last_update_id = u["update_id"]
+                msg = u.get("message", {}).get("text", "").upper()
+                
+                if msg == "STATUS":
+                    progresso = (self.bankroll / 2500) * 100
+                    self.send_msg(f"📊 *REPORT LIVE*\n💰 Bank: {round(self.bankroll,2)}€\n📉 Loss Oggi: {round(self.daily_loss,2)}€\n🚀 Target: {min(100, round(progresso,1))}% verso 150€/die")
+                
+                elif msg == "WIN" and self.active_bet:
+                    profit = round(self.active_bet['stake'] * (self.active_bet['quota'] - 1), 2)
+                    self.bankroll += profit
+                    self.send_msg(f"✅ *CASSA!* +{profit}€\n🏦 Bankroll: {round(self.bankroll,2)}€")
+                    self.active_bet = None
+                    
+                elif msg == "LOSS" and self.active_bet:
+                    loss = self.active_bet['stake']
+                    self.bankroll -= loss
+                    self.daily_loss += loss
+                    self.send_msg(f"❌ *PERSA* -{loss}€\n🏦 Bankroll: {round(self.bankroll,2)}€")
+                    self.active_bet = None
+        except: pass
+
+# ==========================================
+# 🚀 MAIN LOOP
+# ==========================================
+bot = EliteBot()
+bot.send_msg("🚀 *SISTEMA ELITE V3 ATTIVO*\nTarget: 50€ ➔ 150€/giorno\nComandi: STATUS, WIN, LOSS")
+
+while True:
+    bot.handle_tg()
+
+    # Controllo Stop-Loss Giornaliero
+    if bot.daily_loss >= (bot.bankroll * bot.stop_loss_limit):
+        bot.send_msg("⚠️ *STOP-LOSS RAGGIUNTO* per oggi. Il bot si ferma per sicurezza.")
+        time.sleep(3600 * 12) # Pausa 12 ore
+        bot.daily_loss = 0
+        continue
+
+    # Ricerca Bet se non ce n'è una attiva
+    if bot.active_bet is None:
+        segnalazione = bot.fetch_live_signals()
+        if segnalazione:
+            # Qui si assume una quota media live di 1.60 per il calcolo, 
+            # l'utente la verificherà sul bookmaker
+            stake = bot.get_stake()
+            bot.active_bet = {"match": segnalazione['match'], "stake": stake, "quota": 1.60}
+            
+            msg = (f"🎯 *NUOVO SEGNALE VALORE*\n\n"
+                   f"⚽ {segnalazione['match']}\n"
+                   f"💡 Puntata su: *{segnalazione['pick']}*\n"
+                   f"📊 Info: {segnalazione['reason']}\n"
+                   f"💰 Stake consigliato: *{stake}€*\n\n"
+                   f"Rispondi WIN o LOSS")
+            bot.send_msg(msg)
+
+    time.sleep(60) # Scan ogni minuto
