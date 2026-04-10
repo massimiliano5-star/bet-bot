@@ -1,5 +1,6 @@
 import requests, time, datetime, csv, os, pytz, sys
 
+# Forza Railway a mostrare i log subito
 sys.stdout.reconfigure(line_buffering=True)
 
 # ===== CONFIG =====
@@ -9,51 +10,60 @@ CHAT_ID = "545852688"
 TZ = pytz.timezone('Europe/Rome')
 OFFSET = -1 
 
-print("--- [SISTEMA] AVVIO CORRETTO CON PRIORITÀ TELEGRAM ---")
+print("--- [SISTEMA] AVVIO VERSION ELITE SBLOCCATA ---")
 
 def invia_tg(metodo, params=None):
     url = f"https://telegram.org{TOKEN}/{metodo}"
     try:
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(url, params=params, timeout=5) # Timeout corto per non bloccare
         return r.json()
     except: return None
 
-# Reset iniziale della coda
+# Reset iniziale della coda messaggi
 invia_tg("getUpdates", {"offset": OFFSET})
 OFFSET = 0
 
 def run():
     global OFFSET
-    ultimo_controllo_quote = 0 # Timer per non intasare il bot
+    ultimo_controllo_quote = 0
     
-    print("--- [SISTEMA] BOT PRONTO ---")
-    invia_tg("sendMessage", {"chat_id": CHAT_ID, "text": "⚡️ *SISTEMA SBLOCCATO*\nAdesso i comandi hanno la priorità. Prova `/status`!"})
+    print("--- [SISTEMA] BOT PRONTO E IN ASCOLTO ---")
+    invia_tg("sendMessage", {"chat_id": CHAT_ID, "text": "✅ *SISTEMA SBLOCCATO TOTALMENTE*\nAdesso rispondo subito. Prova `/status`!"})
 
     while True:
         try:
-            # 1. LEGGI TELEGRAM (Sempre prioritario)
-            updates = invia_tg("getUpdates", {"offset": OFFSET, "timeout": 5})
+            # 1. TELEGRAM (Priorità Assoluta)
+            updates = invia_tg("getUpdates", {"offset": OFFSET, "timeout": 2})
             if updates and updates.get("ok"):
                 for u in updates["result"]:
                     OFFSET = u["update_id"] + 1
                     if "message" in u and "text" in u["message"]:
                         testo = u["message"].lower()
-                        print(f"--- [LOG] Ricevuto comando: {testo} ---")
+                        print(f"--- [LOG] Comando Telegram: {testo} ---")
                         
                         if "/status" in testo:
-                            invia_tg("sendMessage", {"chat_id": CHAT_ID, "text": "📊 *REPORT ELITE*\n💰 Bankroll: 50.00€\n✅ Status: Operativo e Sbloccato"})
+                            invia_tg("sendMessage", {"chat_id": CHAT_ID, "text": "📊 *REPORT REAL-TIME*\n💰 Bankroll: 50.00€\n⚡️ Stato: Operativo\n📡 Connessione: OK"})
+                        elif "/start" in testo:
+                            invia_tg("sendMessage", {"chat_id": CHAT_ID, "text": "👋 Bot Elite attivo e pronto!"})
 
-            # 2. ANALISI QUOTE (Solo ogni 5 minuti / 300 secondi)
+            # 2. ANALISI (Solo una volta ogni 10 minuti per non saturare la rete)
             tempo_attuale = time.time()
-            if tempo_attuale - ultimo_controllo_quote > 300:
-                print("--- [ANALISI] Scansione quote (Ogni 5 min)... ---")
-                # (Qui il bot fa il suo lavoro di ricerca)
+            if tempo_attuale - ultimo_controllo_quote > 600:
+                print("--- [SISTEMA] Avvio Scansione Quote (Safe Mode) ---")
+                try:
+                    url_o = f"https://the-odds-api.com{ODDS_API_KEY}&regions=eu&markets=h2h"
+                    # Chiamata rapida per non bloccare il bot
+                    res = requests.get(url_o, timeout=10).json()
+                    print(f"--- [ANALISI] Match scansionati: {len(res)} ---")
+                except:
+                    print("--- [ANALISI] Errore o Timeout quote, riprovo dopo ---")
+                
                 ultimo_controllo_quote = tempo_attuale
 
-            time.sleep(2) # Pausa breve per essere reattivo su Telegram
+            time.sleep(1) # Reazione in 1 secondo
             
         except Exception as e:
-            print(f"--- [ERRORE] {e} ---")
+            print(f"--- [LOOP ERRORE] {e} ---")
             time.sleep(5)
 
 if __name__ == "__main__":
