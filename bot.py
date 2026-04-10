@@ -4,50 +4,174 @@ import datetime
 import csv
 import os
 import math
+import json
 
-# ===== CONFIG =====
+# ================= CONFIG =================
 ODDS_API_KEY = "f0eaec5e8d2b7e2c0598b311b9e9aa32"
 FOOTBALL_API_KEY = "50c72696adfffd60c9540455af3b7f9a"
 TOKEN = "8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU"
 CHAT_ID = "545852688"
 
-TRACK_FILE = "tracking.csv"
-DATASET = "dataset.csv"
-
 BANKROLL_BASE = 50
 
-# ===== INIT FILE =====
+TRACK_FILE = "tracking.csv"
+DATASET = "dataset.csv"
+WEIGHTS_FILE = "weights.json"
+
+MAX_POSITIONS = 3
+MAX_EXPOSURE = 0.15
+
+open_positions = []
+
+# ================= INIT =================
 if not os.path.exists(TRACK_FILE):
     with open(TRACK_FILE, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["data","match","quota","stake","esito","profitto"])
+        csv.writer(f).writerow(["time","match","quota","stake","esito","profit"])
 
 if not os.path.exists(DATASET):
     with open(DATASET, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["shots_diff","att_diff","poss_diff","minute","quota","result"])
+        csv.writer(f).writerow(["f1","f2","f3","minute","quota","result"])
 
-# ===== TELEGRAM =====
+# ================= WEIGHTS AI =================
+def load_weights():
+    if os.path.exists(WEIGHTS_FILE):
+        return json.load(open(WEIGHTS_FILE))
+    return [0.1, 0.1, 0.05, 0.01, -0.2]
+
+def save_weights(w):
+    with open(WEIGHTS_FILE, "w") as f:
+        json.dump(w, f)
+
+weights = load_weights()
+
+def predict(features):
+    z = sum(w*f for w,f in zip(weights, features))
+    return 1 / (1 + math.exp(-z))
+
+def self_learn(features, result):
+    global weights
+    lr = 0.001
+
+    pred = predict(features)
+    error = result - pred
+
+    for i in range(len(weights)):
+        weights[i] += lr * error * features[i]
+
+    save_weights(weights)
+
+# ================= TELEGRAM =================
 def send(msg):
     try:
-        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={"chat_id": CHAT_ID, "text": msg}
+        )
     except:
         pass
 
-# ===== BANKROLL =====
+# ================= BANKROLL =================
 def bankroll():
     profit = 0
     try:
         with open(TRACK_FILE) as f:
             for r in csv.DictReader(f):
-                profit += float(r["profitto"])
+                profit += float(r["profit"])
     except:
         pass
     return BANKROLL_BASE + profit
 
-# ===== API =====
-def get_live_matches():
+# ================= METRICS =================
+def metrics(window=50):
+    try:
+        with open(TRACK_FILE) as f:
+            rows = list(csv.DictReader(f))[-window:]
+
+        wins = sum(1 for r in rows if r["esito"] == "WIN")
+        profit = sum(float(r["profit"]) for r in rows)
+
+        total = len(rows)
+        winrate = wins / total if total else 0
+
+        return winrate, profit
+    except:
+        return 0, 0
+
+def sharpe_like():
+    try:
+        profits = []
+        with open(TRACK_FILE) as f:
+            for r in csv.DictReader(f):
+                profits.append(float(r["profit"]))
+
+        if len(profits) < 5:
+            return 0
+
+        avg = sum(profits)/len(profits)
+        std = (sum((x-avg)**2 for x in profits)/len(profits))**0.5
+
+        return avg / std if std else 0
+    except:
+        return 0
+
+# ================= RISK =================
+def risk_check():
+    bank = bankroll()
+    winrate, profit = metrics()
+
+    if profit < -bank * 0.1:
+        return "STOP"
+
+    if bank < BANKROLL_BASE * 0.6:
+        return "STOP"
+
+    return "OK"
+
+# ================= MODELS =================
+def momentum_model(h, a):
+    return (
+        h["shots_on_goal"]*3 + h["dangerous_attacks"]*1.5
+    ) / (
+        a["shots_on_goal"]*3 + a["dangerous_attacks"]*1.5 + 1
+    )
+
+def value_model(quota):
+    return (1 / quota) * 1.1
+
+def ensemble(prob_m, prob_v, prob_ai):
+    return prob_m*0.35 + prob_v*0.25 + prob_ai*0.40
+
+# ================= FEATURES =================
+def extract(h, a, minute, quota):
+    try:
+        return [
+            h["shots_on_goal"] - a["shots_on_goal"],
+            h["dangerous_attacks"] - a["dangerous_attacks"],
+            int(h["possession"].replace("%","")) - int(a["possession"].replace("%","")),
+            minute,
+            quota
+        ]
+    except:
+        return None
+
+# ================= STAKE =================
+def kelly(prob, quota):
+    b = quota - 1
+    q = 1 - prob
+    k = (b*prob - q) / b
+    return max(0, min(k, 0.05))
+
+def stake(prob, quota):
+    if current_exposure() > bankroll() * MAX_EXPOSURE:
+        return 0
+    return bankroll() * kelly(prob, quota)
+
+# ================= EXPOSURE =================
+def current_exposure():
+    return sum(p["stake"] for p in open_positions)
+
+# ================= API =================
+def get_matches():
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
     headers = {
         "X-RapidAPI-Key": FOOTBALL_API_KEY,
@@ -56,8 +180,7 @@ def get_live_matches():
     params = {"live": "all"}
 
     try:
-        res = requests.get(url, headers=headers, params=params, timeout=10)
-        return res.json().get("response", [])
+        return requests.get(url, headers=headers, params=params, timeout=10).json().get("response", [])
     except:
         return []
 
@@ -74,100 +197,9 @@ def get_odds():
     except:
         return []
 
-# ===== AI MODEL =====
-weights = [0.1, 0.1, 0.05, 0.01, -0.2]
-
-def predict(features):
-    z = sum(w*f for w,f in zip(weights, features))
-    return 1 / (1 + math.exp(-z))
-
-def train():
-    global weights
-    lr = 0.001
-
-    try:
-        with open(DATASET) as f:
-            data = list(csv.DictReader(f))
-
-        for row in data:
-            x = [
-                float(row["shots_diff"]),
-                float(row["att_diff"]),
-                float(row["poss_diff"]),
-                float(row["minute"]),
-                float(row["quota"])
-            ]
-            y = int(row["result"])
-
-            pred = predict(x)
-            error = y - pred
-
-            for i in range(len(weights)):
-                weights[i] += lr * error * x[i]
-    except:
-        pass
-
-# ===== FEATURES =====
-def extract_features(home_stats, away_stats, minute, quota):
-    try:
-        return [
-            home_stats["shots_on_goal"] - away_stats["shots_on_goal"],
-            home_stats["dangerous_attacks"] - away_stats["dangerous_attacks"],
-            int(home_stats["possession"].replace("%","")) - int(away_stats["possession"].replace("%","")),
-            minute,
-            quota
-        ]
-    except:
-        return None
-
-# ===== ULTRA MODEL =====
-def calc_ultra_prob(home_stats, away_stats, minute):
-    try:
-        h = home_stats
-        a = away_stats
-
-        home_score = (h["shots_on_goal"]*3 + h["dangerous_attacks"]*1.5 + int(h["possession"].replace("%","")))
-        away_score = (a["shots_on_goal"]*3 + a["dangerous_attacks"]*1.5 + int(a["possession"].replace("%","")))
-
-        boost = 1 + (minute/90)
-
-        home_score *= boost
-        away_score *= boost
-
-        total = home_score + away_score
-        if total == 0:
-            return 0,0
-
-        return home_score/total, away_score/total
-    except:
-        return 0,0
-
-# ===== VALUE =====
-def value_score(quota):
-    return (1 / quota) * 1.1
-
-def combined_score(m,v,a):
-    return (m*0.4 + v*0.3 + a*0.3)
-
-# ===== KELLY =====
-def kelly(prob, quota):
-    b = quota - 1
-    q = 1 - prob
-    k = (b*prob - q) / b
-    return max(0, min(k, 0.05))
-
-# ===== RISK =====
-def risk_control():
-    b = bankroll()
-    if b < 30:
-        return "STOP"
-    elif b < 45:
-        return "LOW"
-    return "NORMAL"
-
-# ===== CORE =====
-def find_bets():
-    matches = get_live_matches()
+# ================= CORE ENGINE =================
+def find_opportunities():
+    matches = get_matches()
     odds = get_odds()
 
     candidates = []
@@ -175,45 +207,38 @@ def find_bets():
     for m in matches:
         try:
             minute = m["fixture"]["status"]["elapsed"]
-            if minute is None or minute < 60 or minute > 82:
+            if not minute or minute < 60 or minute > 82:
                 continue
 
             stats = m.get("statistics")
             if not stats:
                 continue
 
-            home = m["teams"]["home"]["name"]
-            away = m["teams"]["away"]["name"]
-
-            home_stats = stats[0]
-            away_stats = stats[1]
-
-            if home_stats["dangerous_attacks"] + away_stats["dangerous_attacks"] < 40:
-                continue
+            h = stats[0]
+            a = stats[1]
 
             for o in odds:
-                if home.lower() in o.get("home_team","").lower():
+                if m["teams"]["home"]["name"].lower() in o.get("home_team","").lower():
 
                     if not o.get("bookmakers"):
                         continue
 
-                    outcomes = o["bookmakers"][0]["markets"][0]["outcomes"]
-
-                    for out in outcomes:
+                    for out in o["bookmakers"][0]["markets"][0]["outcomes"]:
                         quota = out["price"]
                         team = out["name"]
 
-                        features = extract_features(home_stats, away_stats, minute, quota)
+                        features = extract(h, a, minute, quota)
                         if not features:
                             continue
 
                         prob_ai = predict(features)
-                        ph, pa = calc_ultra_prob(home_stats, away_stats, minute)
-                        prob_m = ph if team == home else pa
-                        prob_v = value_score(quota)
 
-                        final_prob = combined_score(prob_m, prob_v, prob_ai)
+                        prob_m = momentum_model(h, a)
+                        prob_v = value_model(quota)
+
+                        final_prob = ensemble(prob_m, prob_v, prob_ai)
                         prob_book = 1 / quota
+
                         value = final_prob - prob_book
 
                         if value > 0.15:
@@ -224,86 +249,54 @@ def find_bets():
                                 "prob": final_prob,
                                 "minute": minute,
                                 "features": features,
-                                "match": f"{home} vs {away}"
+                                "match": f"{m['teams']['home']['name']} vs {m['teams']['away']['name']}"
                             })
 
         except:
             continue
 
-    if not candidates:
-        return None
+    return sorted(candidates, key=lambda x: x["value"], reverse=True)[:MAX_POSITIONS]
 
-    return sorted(candidates, key=lambda x: x["value"], reverse=True)[:2]
-
-# ===== TRACK =====
-ultima_bet = None
-
-def save_result(esito):
-    global ultima_bet
-
-    if not ultima_bet:
-        return
-
-    q = ultima_bet["quota"]
-    s = ultima_bet["stake"]
-
-    profit = s*(q-1) if esito=="WIN" else -s
-
-    with open(TRACK_FILE,"a",newline="") as f:
-        csv.writer(f).writerow([
-            datetime.datetime.now(),
-            ultima_bet["match"],
-            q,s,esito,profit
-        ])
-
-    with open(DATASET,"a",newline="") as f:
-        csv.writer(f).writerow(ultima_bet["features"] + [1 if esito=="WIN" else 0])
-
-    send(f"📊 {esito} | 💰 {round(profit,2)}€ | 🏦 {round(bankroll(),2)}€")
-
-    ultima_bet = None
-
-# ===== LOOP =====
+# ================= EXECUTION =================
 def run():
-    global ultima_bet
-
-    send("💼 HEDGE FUND BOT ATTIVO")
+    send("🏦 QUANT HEDGE FUND SYSTEM ONLINE")
 
     while True:
         try:
-            mode = risk_control()
-            if mode == "STOP":
-                send("🛑 STOP DRAWNDOWN")
+            if risk_check() == "STOP":
+                send("🛑 RISK KILL SWITCH ATTIVO")
                 time.sleep(3600)
                 continue
 
-            bets = find_bets()
+            bets = find_opportunities()
 
-            if bets:
-                for b in bets:
-                    stake = round(bankroll() * kelly(b["prob"], b["quota"]),2)
+            for b in bets:
+                s = stake(b["prob"], b["quota"])
+                if s <= 0:
+                    continue
 
-                    ultima_bet = {
-                        "match": b["match"],
-                        "quota": b["quota"],
-                        "stake": stake,
-                        "features": b["features"]
-                    }
+                open_positions.append({
+                    "team": b["team"],
+                    "stake": s,
+                    "quota": b["quota"]
+                })
 
-                    send(
-                        f"💼 BET\n{b['match']}\n👉 {b['team']}\n"
-                        f"⏱ {b['minute']}\nQuota: {b['quota']}\n"
-                        f"📊 Prob: {round(b['prob'],2)}\n"
-                        f"📈 Value: {round(b['value'],2)}\n"
-                        f"💰 Stake: {stake}€"
-                    )
+                send(
+                    f"🏦 INSTITUTIONAL BET\n"
+                    f"{b['match']}\n"
+                    f"{b['team']}\n"
+                    f"⏱ {b['minute']}\n"
+                    f"Quota: {b['quota']}\n"
+                    f"Value: {round(b['value'],2)}\n"
+                    f"Stake: {round(s,2)}€"
+                )
 
-            train()
+            self_learn(b["features"], 1)  # placeholder semplificato
 
             time.sleep(60)
 
         except Exception as e:
-            print("Errore:", e)
+            print("ERROR:", e)
             time.sleep(30)
 
 run()
