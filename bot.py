@@ -1,6 +1,4 @@
 import requests, time, datetime, csv, os, pytz, sys
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -12,69 +10,69 @@ CHAT_ID = "545852688"
 TZ = pytz.timezone('Europe/Rome')
 OFFSET = 0
 
-# Sessione professionale per evitare blocchi Railway
-session = requests.Session()
-retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-session.mount('https://', HTTPAdapter(max_retries=retries))
-headers = {'User-Agent': 'Mozilla/5.0'}
+print("--- [SISTEMA] BOT ELITE IN ASCOLTO... ---")
 
 def invia_tg(metodo, params=None):
     url = f"https://telegram.org{TOKEN}/{metodo}"
     try:
-        r = session.get(url, params=params, headers=headers, timeout=25)
+        r = requests.get(url, params=params, timeout=20)
         return r.json()
     except: return None
 
 def analizza_elite():
-    """Usa Odds API per trovare il match e Football API per i dettagli live"""
+    """Analisi scommesse attiva fino alle 23:59"""
+    ora = datetime.datetime.now(TZ).hour
+    if ora < 10: return None # Riposo notturno per le bet
+
     url_o = "https://the-odds-api.com"
-    params_o = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h"}
+    p = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h"}
     try:
-        res = session.get(url_o, params=params_o, timeout=20).json()
+        res = requests.get(url_o, params=p, timeout=15).json()
         for match in res:
             try:
                 bm = match.get("bookmakers", [])
                 if not bm: continue
-                outcomes = sorted(bm[0]["markets"][0]["outcomes"], key=lambda x: x['price'])
-                fav = outcomes[0]
-                
-                # FILTRO ELITE
+                # Filtro Elite 1.25 - 1.45
+                outcomes = sorted(bm["markets"]["outcomes"], key=lambda x: x['price'])
+                fav = outcomes
                 if 1.25 <= fav["price"] <= 1.45:
-                    return {
-                        "match": f"{match['home_team']} vs {match['away_team']}",
-                        "team": fav["name"],
-                        "quota": fav["price"]
-                    }
+                    return {"match": f"{match['home_team']} vs {match['away_team']}", "team": fav["name"], "quota": fav["price"]}
             except: continue
     except: pass
     return None
 
 def run():
     global OFFSET
-    print("--- [SISTEMA] BOT ELITE INTEGRATO ---")
-    invia_tg("sendMessage", {"chat_id": CHAT_ID, "text": "🚀 *SISTEMA ELITE COMPLETO ATTIVO*\n(Telegram + Odds + Football API)", "parse_mode": "Markdown"})
+    # Messaggio di conferma avvio immediato
+    invia_tg("sendMessage", {"chat_id": CHAT_ID, "text": "✅ *BOT RICONNESSO E OPERATIVO*\nScrivi `/status` ora per testare.", "parse_mode": "Markdown"})
 
     while True:
         try:
-            # 1. Controllo Comandi
+            # 1. GESTIONE COMANDI (Sempre attiva 24/7)
             updates = invia_tg("getUpdates", {"offset": OFFSET, "timeout": 10})
             if updates and updates.get("ok"):
                 for u in updates["result"]:
                     OFFSET = u["update_id"] + 1
-                    if "/status" in u.get("message", {}).get("text", "").lower():
-                        invia_tg("sendMessage", {"chat_id": CHAT_ID, "text": "📊 *STATUS*: Integrazione API OK ✅"})
+                    if "message" in u and "text" in u["message"]:
+                        testo = u["message"].lower()
+                        print(f"--- [LOG] Ricevuto: {testo} ---")
+                        
+                        if "/status" in testo:
+                            invia_tg("sendMessage", {"chat_id": CHAT_ID, "text": "📊 *STATUS ELITE*\n💰 Bankroll: 50.00€\n✅ Sistema: Online\n⚽️ Analisi: In corso..."})
+                        elif "/start" in testo:
+                            invia_tg("sendMessage", {"chat_id": CHAT_ID, "text": "👋 Benvenuto nel Sistema Elite! Sono pronto."})
 
-            # 2. Ricerca con filtri avanzati
+            # 2. RICERCA BET
             bet = analizza_elite()
             if bet:
-                msg = f"🔥 *SEGNALE ELITE*\n🏟 {bet['match']}\n👉 Punta: *{bet['team']}*\n📈 Quota: {bet['quota']}"
+                msg = f"🔥 *NUOVO SEGNALE*\n🏟 {bet['match']}\n👉 {bet['team']}\n📈 Quota: {bet['quota']}"
                 invia_tg("sendMessage", {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-                time.sleep(600)
+                time.sleep(600) # Evita spam
 
-            time.sleep(120)
+            time.sleep(30) # Ciclo più veloce per rispondere ai comandi
         except Exception as e:
-            print(f"--- [LOOP] {e} ---")
-            time.sleep(30)
+            print(f"--- [ERRORE] {e} ---")
+            time.sleep(10)
 
 if __name__ == "__main__":
     run()
