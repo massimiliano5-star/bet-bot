@@ -17,25 +17,39 @@ FILE_DATA = "bot_finanze.json"
 
 def carica_dati():
     default = {"bankroll": BANKROLL_INIZIALE, "daily_loss_count": 0, "last_trade_date": datetime.now().strftime("%Y-%m-%d")}
-    if not os.path.exists(FILE_DATA) or os.stat(FILE_DATA).st_size == 0:
+    if not os.path.exists(FILE_DATA):
         return default
     try:
-        with open(FILE_DATA, "r") as f: return json.load(f)
-    except: return default
+        with open(FILE_DATA, "r") as f:
+            content = f.read().strip()
+            if not content: return default
+            return json.loads(content)
+    except:
+        return default
 
 def salva_dati(dati):
-    with open(FILE_DATA, "w") as f: json.dump(dati, f, indent=4)
+    try:
+        with open(FILE_DATA, "w") as f:
+            json.dump(dati, f, indent=4)
+    except Exception as e:
+        print(f"⚠️ Errore salvataggio: {e}")
 
 def send_tg(msg):
-    if not TELEGRAM_TOKEN or not CHAT_ID: return False
-    # Forza URL corretto
-    token_pulito = TELEGRAM_TOKEN.strip()
-    url = f"https://telegram.org{token_pulito}/sendMessage"
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        print("❌ Variabili Telegram mancanti!")
+        return False
+    
+    # Pulizia totale del token
+    token = str(TELEGRAM_TOKEN).strip().replace("bot", "")
+    url = f"https://telegram.org{token}/sendMessage"
+    
     try:
-        r = requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=15)
+        r = requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=20)
+        if r.status_code != 200:
+            print(f"❌ Telegram API Error: {r.text}")
         return r.status_code == 200
     except Exception as e:
-        print(f"❌ Errore critico connessione: {e}")
+        print(f"❌ Errore connessione: {e}")
         return False
 
 def analizza_dominio_reale(f_id):
@@ -63,23 +77,25 @@ def analizza_dominio_reale(f_id):
     except: return None
 
 def run_bot():
+    print("🚀 Avvio sistema ELITE...")
     dati = carica_dati()
     active_bet = None
-    print("🚀 Avvio sistema in corso...")
     
+    # Primo tentativo di contatto
     if send_tg(f"🤖 **SISTEMA ELITE ONLINE**\n💰 Bankroll: {dati['bankroll']}€"):
-        print("✅ Collegamento Telegram OK")
+        print("✅ Telegram collegato!")
     else:
-        print("❌ Fallimento invio Telegram. Controlla il TOKEN su Railway!")
+        print("❌ Fallimento Telegram. Controlla il Token su Railway.")
 
     while True:
         try:
             dati = carica_dati()
+            
             if active_bet:
                 r = requests.get(f"https://api-sports.io{active_bet['id']}", headers={"x-apisports-key": API_KEY_FOOTBALL}, timeout=10)
-                res_data = r.json().get('response', [])
-                if res_data:
-                    res = res_data[0]
+                res_list = r.json().get('response', [])
+                if res_list:
+                    res = res_list[0]
                     if res['fixture']['status']['short'] in ['FT', 'AET', 'PEN']:
                         g_h, g_a = res['goals']['home'], res['goals']['away']
                         win = (active_bet['side'] == "HOME" and g_h > g_a) or (active_bet['side'] == "AWAY" and g_a > g_h)
@@ -90,8 +106,8 @@ def run_bot():
                         salva_dati(dati)
             else:
                 r = requests.get("https://api-sports.io", headers={"x-apisports-key": API_KEY_FOOTBALL}, timeout=10)
-                data = r.json().get('response', [])
-                for p in data:
+                live_data = r.json().get('response', [])
+                for p in live_data:
                     tempo = p['fixture']['status']['elapsed'] or 0
                     if 25 <= tempo <= 75:
                         analisi = analizza_dominio_reale(p['fixture']['id'])
@@ -100,9 +116,10 @@ def run_bot():
                             active_bet = {"id": p['fixture']['id'], "side": analisi['side'], "stake": stake, "odd": 1.45}
                             send_tg(f"🔥 **SEGNALE**\n⚽ {p['teams']['home']['name']} - {p['teams']['away']['name']}\n🎯 Puntata: {analisi['name']}\n💰 Stake: {stake}€")
                             break
+
             time.sleep(300)
         except Exception as e:
-            print(f"⚠️ Errore: {e}")
+            print(f"⚠️ Errore loop: {e}")
             time.sleep(60)
 
 if __name__ == "__main__":
