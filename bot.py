@@ -1,18 +1,18 @@
 import requests
 import time
 import datetime
-import pytz
 import csv
 import os
 
 # ===== CONFIG =====
-ODDS_API_KEY = "LA_TUA_ODDS_API_KEY"
-FOOTBALL_API_KEY = "LA_TUA_API_FOOTBALL_KEY"
-TOKEN = "IL_TUO_TELEGRAM_TOKEN"
-CHAT_ID = "IL_TUO_CHAT_ID"
+ODDS_API_KEY = "f0eaec5e8d2b7e2c0598b311b9e9aa32"
+FOOTBALL_API_KEY = "50c72696adfffd60c9540455af3b7f9a"
+TOKEN = "8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU"
+CHAT_ID = "545852688"
 
 FILE = "tracking.csv"
 LAST_UPDATE_ID = None
+MAX_BET_GIORNO = 2
 
 # ===== INIT FILE =====
 if not os.path.exists(FILE):
@@ -20,18 +20,17 @@ if not os.path.exists(FILE):
         writer = csv.writer(f)
         writer.writerow(["data", "match", "quota", "stake", "esito", "profitto"])
 
-# ===== TELEGRAM =====
+# ===== TELEGRAM SEND =====
 def send(msg):
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
-    except:
-        pass
+    except Exception as e:
+        print("Errore Telegram:", e)
 
-# ===== READ MSG =====
+# ===== TELEGRAM READ =====
 def read_msgs():
     global LAST_UPDATE_ID
-
     try:
         res = requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates").json()
 
@@ -68,7 +67,7 @@ def bankroll():
 def stake():
     return round(bankroll() * 0.04, 2)
 
-# ===== SALVA =====
+# ===== TRACK =====
 ultima_bet = None
 
 def salva(esito):
@@ -79,12 +78,13 @@ def salva(esito):
 
     q = ultima_bet["quota"]
     s = ultima_bet["stake"]
+    match = ultima_bet["match"]
 
     profit = s * (q - 1) if esito == "WIN" else -s
 
     with open(FILE, "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([datetime.datetime.now(), ultima_bet["match"], q, s, esito, profit])
+        writer.writerow([datetime.datetime.now(), match, q, s, esito, profit])
 
     send(f"📊 {esito} | 💰 {round(profit,2)}€ | 🏦 Bank: {round(bankroll(),2)}€")
 
@@ -104,7 +104,7 @@ def get_matches():
     }
 
     try:
-        res = requests.get(url, headers=headers, params=params)
+        res = requests.get(url, headers=headers, params=params, timeout=10)
         return res.json().get("response", [])
     except:
         return []
@@ -119,16 +119,42 @@ def get_odds():
     }
 
     try:
-        res = requests.get(url, params=params)
+        res = requests.get(url, params=params, timeout=10)
+
+        print("STATUS ODDS:", res.status_code)
+
         if res.status_code != 200:
-            print("Errore Odds:", res.status_code)
+            print("ERRORE:", res.text[:200])
             return []
+
         return res.json()
-    except:
+
+    except Exception as e:
+        print("Errore Odds:", e)
         return []
 
-# ===== MATCHING + ANALISI =====
+# ===== BET DEL GIORNO =====
+def bets_today():
+    today = datetime.date.today()
+    count = 0
+
+    try:
+        with open(FILE) as f:
+            for row in csv.DictReader(f):
+                data = datetime.datetime.fromisoformat(row["data"]).date()
+                if data == today:
+                    count += 1
+    except:
+        pass
+
+    return count
+
+# ===== ANALISI =====
 def analizza():
+    if bets_today() >= MAX_BET_GIORNO:
+        print("Limite giornaliero raggiunto")
+        return None
+
     matches = get_matches()
     odds = get_odds()
 
@@ -140,24 +166,21 @@ def analizza():
             home = m["teams"]["home"]["name"]
             away = m["teams"]["away"]["name"]
 
-            # trova match nelle odds
             for o in odds:
-                if home in o["home_team"] and away in o["away_team"]:
+                if home.lower() in o["home_team"].lower():
 
                     outcomes = o["bookmakers"][0]["markets"][0]["outcomes"]
 
                     t1, t2 = outcomes[0], outcomes[1]
                     q1, q2 = t1["price"], t2["price"]
 
-                    # scegli favorita
                     if q1 < q2:
                         team, quota, opp = t1["name"], q1, q2
                     else:
                         team, quota, opp = t2["name"], q2, q1
 
-                    # FILTRO PRO
+                    # FILTRO ELITE
                     if 1.20 <= quota <= 1.50 and opp >= 3:
-
                         score = (opp - quota)
 
                         if score > best_score:
@@ -177,7 +200,7 @@ def analizza():
 def run():
     global ultima_bet
 
-    send("🚀 BOT PRO DOPPIA API ATTIVO")
+    send("🚀 BOT ELITE ATTIVO")
 
     while True:
         try:
@@ -202,7 +225,7 @@ def run():
                     }
 
                     send(
-                        f"🔥 BET PRO\n{bet['match']}\n👉 {bet['team']}\nQuota: {bet['quota']}\n💰 Stake: {s}€"
+                        f"🔥 BET ELITE\n{bet['match']}\n👉 {bet['team']}\nQuota: {bet['quota']}\n💰 Stake: {s}€"
                     )
 
             time.sleep(120)
