@@ -5,41 +5,37 @@ import json
 from datetime import datetime
 
 # =================================================================
-# CONFIGURAZIONE (LEGGE DA RAILWAY VARIABLES)
+# CONFIGURAZIONE (DA RAILWAY VARIABLES)
 # =================================================================
 API_KEY_FOOTBALL = os.getenv("API_KEY_FOOTBALL")
-RAW_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-
-# Pulizia automatica del token (rimuove 'bot' se inserito per errore)
-TELEGRAM_TOKEN = RAW_TOKEN.replace("bot", "") if RAW_TOKEN else None
 
 BANKROLL_INIZIALE = 50.0
 TARGET_GIORNALIERO = 150.0
 FILE_DATA = "bot_finanze.json"
 
 def carica_dati():
-    if os.path.exists(FILE_DATA):
-        try:
-            with open(FILE_DATA, "r") as f: return json.load(f)
-        except: pass
-    return {"bankroll": BANKROLL_INIZIALE, "daily_loss_count": 0, "last_trade_date": datetime.now().strftime("%Y-%m-%d")}
+    default = {"bankroll": BANKROLL_INIZIALE, "daily_loss_count": 0, "last_trade_date": datetime.now().strftime("%Y-%m-%d")}
+    if not os.path.exists(FILE_DATA) or os.stat(FILE_DATA).st_size == 0:
+        return default
+    try:
+        with open(FILE_DATA, "r") as f: return json.load(f)
+    except: return default
 
 def salva_dati(dati):
     with open(FILE_DATA, "w") as f: json.dump(dati, f, indent=4)
 
 def send_tg(msg):
-    if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("❌ Token o Chat_ID mancanti nelle variabili!")
-        return False
-    url = f"https://telegram.org{TELEGRAM_TOKEN}/sendMessage"
+    if not TELEGRAM_TOKEN or not CHAT_ID: return False
+    # Forza URL corretto
+    token_pulito = TELEGRAM_TOKEN.strip()
+    url = f"https://telegram.org{token_pulito}/sendMessage"
     try:
         r = requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=15)
-        if r.status_code != 200:
-            print(f"❌ Errore Telegram API: {r.text}")
         return r.status_code == 200
     except Exception as e:
-        print(f"❌ Errore connessione Telegram: {e}")
+        print(f"❌ Errore critico connessione: {e}")
         return False
 
 def analizza_dominio_reale(f_id):
@@ -48,9 +44,9 @@ def analizza_dominio_reale(f_id):
     try:
         r = requests.get(url, headers=headers, timeout=10)
         data = r.json()
-        if 'response' not in data or len(data['response']) < 2: return None
+        res = data.get('response', [])
+        if len(res) < 2: return None
         
-        res = data['response']
         def get_s(team_idx, name):
             for s in res[team_idx]['statistics']:
                 if s['type'] == name: 
@@ -58,51 +54,52 @@ def analizza_dominio_reale(f_id):
                     return int(val) if val.isdigit() else 0
             return 0
 
-        h = {"tiri": get_s(0, 'Shots on Goal'), "att": get_s(0, 'Dangerous Attacks'), "pos": get_s(0, 'Ball Possession')}
-        a = {"tiri": get_s(1, 'Shots on Goal'), "att": get_s(1, 'Dangerous Attacks'), "pos": get_s(1, 'Ball Possession')}
+        h_tiri, a_tiri = get_s(0, 'Shots on Goal'), get_s(1, 'Shots on Goal')
+        h_att, a_att = get_s(0, 'Dangerous Attacks'), get_s(1, 'Dangerous Attacks')
 
-        if h['tiri'] >= a['tiri'] + 3 and h['att'] > a['att'] * 1.5: return {"side": "HOME", "name": "CASA", "odd": 1.50}
-        if a['tiri'] >= h['tiri'] + 3 and a['att'] > h['att'] * 1.5: return {"side": "AWAY", "name": "TRASFERTA", "odd": 1.50}
+        if h_tiri >= a_tiri + 3 and h_att > a_att * 1.5: return {"side": "HOME", "name": "CASA"}
+        if a_tiri >= h_tiri + 3 and a_att > h_att * 1.5: return {"side": "AWAY", "name": "TRASFERTA"}
         return None
     except: return None
 
 def run_bot():
     dati = carica_dati()
     active_bet = None
-    print("🚀 Avvio sistema...")
-    send_tg(f"🤖 **SISTEMA ONLINE**\n💰 Bankroll: {dati['bankroll']}€")
+    print("🚀 Avvio sistema in corso...")
+    
+    if send_tg(f"🤖 **SISTEMA ELITE ONLINE**\n💰 Bankroll: {dati['bankroll']}€"):
+        print("✅ Collegamento Telegram OK")
+    else:
+        print("❌ Fallimento invio Telegram. Controlla il TOKEN su Railway!")
 
     while True:
         try:
             dati = carica_dati()
-            # 1. Controllo Bet Attiva
             if active_bet:
                 r = requests.get(f"https://api-sports.io{active_bet['id']}", headers={"x-apisports-key": API_KEY_FOOTBALL}, timeout=10)
-                res_data = r.json()
-                if 'response' in res_data and res_data['response']:
-                    res = res_data['response'][0]
+                res_data = r.json().get('response', [])
+                if res_data:
+                    res = res_data[0]
                     if res['fixture']['status']['short'] in ['FT', 'AET', 'PEN']:
                         g_h, g_a = res['goals']['home'], res['goals']['away']
                         win = (active_bet['side'] == "HOME" and g_h > g_a) or (active_bet['side'] == "AWAY" and g_a > g_h)
-                        profit = round(active_bet['stake'] * (active_bet['odd'] - 1), 2) if win else -active_bet['stake']
+                        profit = round(active_bet['stake'] * 0.45, 2) if win else -active_bet['stake']
                         dati['bankroll'] = round(dati['bankroll'] + profit, 2)
                         send_tg(f"{'✅ WIN' if win else '❌ LOSS'}\n💰 Profitto: {profit}€\n🏦 Bank: {dati['bankroll']}€")
                         active_bet = None
                         salva_dati(dati)
-            # 2. Ricerca Live
             else:
                 r = requests.get("https://api-sports.io", headers={"x-apisports-key": API_KEY_FOOTBALL}, timeout=10)
-                data = r.json()
-                if 'response' in data:
-                    for p in data['response']:
-                        tempo = p['fixture']['status']['elapsed'] or 0
-                        if 25 <= tempo <= 75:
-                            analisi = analizza_dominio_reale(p['fixture']['id'])
-                            if analisi:
-                                stake = round(dati['bankroll'] * 0.10, 2) if dati['bankroll'] < 500 else round(dati['bankroll'] * 0.05, 2)
-                                active_bet = {"id": p['fixture']['id'], "side": analisi['side'], "stake": stake, "odd": analisi['odd']}
-                                send_tg(f"🔥 **SEGNALE**\n⚽ {p['teams']['home']['name']} - {p['teams']['away']['name']}\n🎯 Puntata: {analisi['name']}\n💰 Stake: {stake}€")
-                                break
+                data = r.json().get('response', [])
+                for p in data:
+                    tempo = p['fixture']['status']['elapsed'] or 0
+                    if 25 <= tempo <= 75:
+                        analisi = analizza_dominio_reale(p['fixture']['id'])
+                        if analisi:
+                            stake = round(dati['bankroll'] * 0.10, 2) if dati['bankroll'] < 500 else round(dati['bankroll'] * 0.05, 2)
+                            active_bet = {"id": p['fixture']['id'], "side": analisi['side'], "stake": stake, "odd": 1.45}
+                            send_tg(f"🔥 **SEGNALE**\n⚽ {p['teams']['home']['name']} - {p['teams']['away']['name']}\n🎯 Puntata: {analisi['name']}\n💰 Stake: {stake}€")
+                            break
             time.sleep(300)
         except Exception as e:
             print(f"⚠️ Errore: {e}")
