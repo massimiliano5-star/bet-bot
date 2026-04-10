@@ -4,17 +4,23 @@ import datetime
 import csv
 import os
 import pytz
+import sys
 
-# ===== CONFIG (INSERISCI I TUOI DATI) =====
+# Forza l'output immediato nei log di Railway
+sys.stdout.reconfigure(line_buffering=True)
+
+# ===== CONFIG =====
 ODDS_API_KEY = "f0eaec5e8d2b7e2c0598b311b9e9aa32"
-FOOTBALL_API_KEY = "50c72696adfffd60c9540455af3b7f9a"
-TOKEN = "8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU"
+FOOTBALL_API_KEY = "50c72696adfffd60c9540455af3b7f94"
+TOKEN = "8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7F_tY"
 CHAT_ID = "545852688"
 
 FILE = "tracking.csv"
-LAST_UPDATE_ID = None
+TZ = pytz.timezone('Europe/Rome')
 MAX_BET_GIORNO = 2
-TZ = pytz.timezone('Europe/Rome') # Forza orario italiano su Railway
+LAST_UPDATE_ID = 0
+
+print("--- [SISTEMA] Avvio in corso... ---")
 
 # ===== INIT FILE =====
 if not os.path.exists(FILE):
@@ -22,132 +28,98 @@ if not os.path.exists(FILE):
         writer = csv.writer(f)
         writer.writerow(["data", "match", "quota", "stake", "esito", "profitto", "fixture_id"])
 
-# ===== FUNZIONI CORE =====
-
 def send(msg):
     try:
         url = f"https://telegram.org{TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-    except: pass
-
-def get_bankroll():
-    profit = 0
-    try:
-        with open(FILE, "r") as f:
-            reader = csv.DictReader(f)
-            for row in reader: profit += float(row["profitto"])
-    except: pass
-    return round(50.0 + profit, 2)
+        requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=10)
+    except Exception as e:
+        print(f"Errore invio Telegram: {e}")
 
 def get_stats_oggi():
     oggi = datetime.datetime.now(TZ).date()
     w, l, p = 0, 0, 0.0
     try:
-        with open(FILE, "r") as f:
-            for row in csv.DictReader(f):
-                dt = datetime.datetime.strptime(row["data"], "%Y-%m-%d %H:%M:%S").date()
-                if dt == oggi:
-                    p += float(row["profitto"])
-                    if row["esito"] == "WIN": w += 1
-                    elif row["esito"] == "LOSS": l += 1
-    except: pass
+        if os.path.exists(FILE):
+            with open(FILE, "r") as f:
+                for row in csv.DictReader(f):
+                    dt = datetime.datetime.strptime(row["data"], "%Y-%m-%d %H:%M:%S").date()
+                    if dt == oggi:
+                        p += float(row["profitto"])
+                        if row["esito"] == "WIN": w += 1
+                        elif row["esito"] == "LOSS": l += 1
+    except Exception as e: print(f"Errore stats: {e}")
     return w, l, round(p, 2)
 
-# ===== ANALISI ELITE (ORARIO 10:00 - 00:00) =====
-
+# ===== ANALISI ELITE =====
 def analizza():
-    # Controllo Orario con Timezone Italiana
-    ora_attuale = datetime.datetime.now(TZ).hour
-    if ora_attuale < 10: return None # Lavora dalle 10:00 alle 23:59
+    ora = datetime.datetime.now(TZ).hour
+    if ora < 10: return None
 
-    win_o, loss_o, _ = get_stats_oggi()
-    if (win_o + loss_o) >= MAX_BET_GIORNO: return None
+    w, l, _ = get_stats_oggi()
+    if (w + l) >= MAX_BET_GIORNO: return None
 
-    # Chiamata API Football per match Live/Oggi
-    headers = {"X-RapidAPI-Key": FOOTBALL_API_KEY, "X-RapidAPI-Host": "://rapidapi.com"}
-    url_f = "https://://rapidapi.com/v3/fixtures"
-    params_f = {"date": datetime.datetime.now(TZ).strftime("%Y-%m-%d")}
-    
+    print("--- [ANALISI] Ricerca match in corso... ---")
     try:
-        res_f = requests.get(url_f, headers=headers, params=params_f).json().get("response", [])
+        # Odds API
         url_o = f"https://the-odds-api.com{ODDS_API_KEY}&regions=eu&markets=h2h"
-        res_o = requests.get(url_o).json()
+        odds_data = requests.get(url_o, timeout=10).json()
         
-        for m in res_f:
-            if m["fixture"]["status"]["short"] not in ["NS", "1H"]: continue
-            home = m["teams"]["home"]["name"]
-            
-            for o in res_o:
-                if home.lower() in o["home_team"].lower():
-                    # Filtro quote Elite
-                    outcomes = sorted(o["bookmakers"][0]["markets"][0]["outcomes"], key=lambda x: x['price'])
-                    fav, quota = outcomes[0]["name"], outcomes[0]["price"]
-                    opp_quota = outcomes[1]["price"]
-                    
-                    if 1.25 <= quota <= 1.45 and opp_quota >= 3.5:
-                        return {"match": f"{o['home_team']} vs {o['away_team']}", "team": fav, "quota": quota, "id": m["fixture"]["id"]}
-    except: return None
+        for o in odds_data:
+            # Estraiamo le quote correttamente
+            try:
+                outcomes = o["bookmakers"][0]["markets"][0]["outcomes"]
+                outcomes = sorted(outcomes, key=lambda x: x['price'])
+                fav = outcomes[0] # La quota più bassa
+                
+                # Filtro Elite
+                if 1.25 <= fav["price"] <= 1.45:
+                    print(f"Match trovato: {o['home_team']} quota {fav['price']}")
+                    return {
+                        "match": f"{o['home_team']} vs {o['away_team']}",
+                        "team": fav["name"],
+                        "quota": fav["price"],
+                        "id": "LIVE" # Semplificato per test
+                    }
+            except: continue
+    except Exception as e:
+        print(f"Errore API: {e}")
     return None
 
-# ===== AUTO-SETTLEMENT =====
-
-def controlla_risultati():
-    headers = {"X-RapidAPI-Key": FOOTBALL_API_KEY, "X-RapidAPI-Host": "://rapidapi.com"}
-    righe, aggiornato = [], False
-    
-    if not os.path.exists(FILE): return
-    with open(FILE, "r") as f: reader = list(csv.DictReader(f))
-    
-    for row in reader:
-        if row["esito"] == "PENDING":
-            try:
-                url = f"https://://rapidapi.com/v3/fixtures?id={row['fixture_id']}"
-                f_data = requests.get(url, headers=headers).json()["response"][0]
-                if f_data["fixture"]["status"]["short"] == "FT":
-                    # Check vittoria semplificato (Home vince)
-                    win = f_data["goals"]["home"] > f_data["goals"]["away"]
-                    row["esito"] = "WIN" if win else "LOSS"
-                    row["profitto"] = round(float(row["stake"]) * (float(row["quota"]) - 1), 2) if win else -float(row["stake"])
-                    aggiornato = True
-                    send(f"✅ *ESITO REGISTRATO*\n{row['match']}\nRisultato: {row['esito']}\nProfitto: {row['profitto']}€")
-            except: pass
-        righe.append(row)
-
-    if aggiornato:
-        with open(FILE, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["data", "match", "quota", "stake", "esito", "profitto", "fixture_id"])
-            writer.writeheader(); writer.writerows(righe)
-
 # ===== LOOP PRINCIPALE =====
-
 def run():
     global LAST_UPDATE_ID
-    send("🚀 *SISTEMA ELITE ATTIVO*\nOperativo fino alle 00:00\nTarget: 150€/gg")
+    print("--- [SISTEMA] Bot Online! ---")
+    send("🚀 *SISTEMA ELITE ONLINE*\nBot attivo su Railway.\nScrivi `/status` per i dati.")
     
     while True:
         try:
-            # Controllo comandi Telegram (/status)
+            # Controllo comandi Telegram
             url_tg = f"https://telegram.org{TOKEN}/getUpdates"
-            res_tg = requests.get(url_tg, params={"offset": LAST_UPDATE_ID}).json()
+            res_tg = requests.get(url_tg, params={"offset": LAST_UPDATE_ID, "timeout": 1}, timeout=10).json()
+            
             for u in res_tg.get("result", []):
                 LAST_UPDATE_ID = u["update_id"] + 1
-                if "/status" in u.get("message", {}).get("text", "").lower():
-                    w, l, p = get_stats_oggi()
-                    send(f"📊 *STATUS*\n💰 Bankroll: {get_bankroll()}€\n📅 Oggi: {p}€\n✅ W: {w} | ❌ L: {l}")
+                if "message" in u and "text" in u["message"]:
+                    txt = u["message"].lower()
+                    if "/status" in txt:
+                        w, l, p = get_stats_oggi()
+                        send(f"📊 *STATUS*\n💰 Profitto Oggi: {p}€\n✅ W: {w} | ❌ L: {l}")
 
-            controlla_risultati()
-            
-            # Cerca nuove Bet
+            # Analisi Bet
             bet = analizza()
             if bet:
-                stk = round(get_bankroll() * 0.05, 2)
+                stk = 5.0 # Stake fisso per test
+                data_ora = datetime.datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
                 with open(FILE, "a", newline="") as f:
                     writer = csv.writer(f)
-                    writer.writerow([datetime.datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S"), bet["match"], bet["quota"], stk, "PENDING", 0, bet["id"]])
+                    writer.writerow([data_ora, bet["match"], bet["quota"], stk, "PENDING", 0, bet["id"]])
+                
                 send(f"🔥 *NUOVA BET*\n🏟 {bet['match']}\n👉 Punta: {bet['team']}\n📈 Quota: {bet['quota']}\n💰 Stake: {stk}€")
             
-            time.sleep(300) # Controllo ogni 5 minuti
-        except: time.sleep(60)
+            time.sleep(60) # Accorciato per i test iniziali
+        except Exception as e:
+            print(f"Errore nel loop: {e}")
+            time.sleep(10)
 
 if __name__ == "__main__":
     run()
