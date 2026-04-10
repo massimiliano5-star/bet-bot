@@ -2,11 +2,12 @@ import requests, time, datetime, csv, os, pytz, sys
 
 sys.stdout.reconfigure(line_buffering=True)
 
-# ===== CONFIG =====
-ODDS_API_KEY = "f0eaec5e8d2b7e2c0598b311b9e9aa32"
-FOOTBALL_API_KEY = "50c72696adfffd60c9540455af3b7f94"
-TOKEN = "8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU"
-CHAT_ID = "545852688"
+# ===== CONFIGURAZIONE CORRETTA =====
+ODDS_API_KEY="f0eaec5e8d2b7e2c0598b311b9e9aa32"
+FOOTBALL_API_KEY="50c72696adfffd60c9540455af3b7f94"
+TOKEN="8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU"
+CHAT_ID="545852688"
+
 
 FILE = "tracking.csv"
 TZ = pytz.timezone('Europe/Rome')
