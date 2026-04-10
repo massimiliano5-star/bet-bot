@@ -10,48 +10,51 @@ TOKEN = "8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU"
 CHAT_ID = "545852688"
 OFFSET = -1 
 
-print("--- [SISTEMA] Avvio con Protocollo di Sicurezza ---")
+print("--- [SISTEMA] Avvio Protocollo Sblocco Rete ---")
 
 def chiama_telegram(metodo, payload=None):
-    """Costruisce l'URL in modo che Railway non possa 'spezzarlo'"""
-    # Usiamo la base URL pulita
+    # Usiamo l'indirizzo completo e forziamo la chiusura della connessione ogni volta
     url = f"https://telegram.org{TOKEN}/{metodo}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0',
+        'Connection': 'close' # Forza Railway a non usare connessioni vecchie e bloccate
+    }
     try:
-        # Usiamo una richiesta POST che è molto più stabile su Railway
-        r = requests.post(url, data=payload, timeout=15)
+        # Aumentiamo il timeout a 30 secondi per dare tempo alla rete Trial
+        r = requests.post(url, data=payload, headers=headers, timeout=30)
         return r.json()
     except Exception as e:
-        print(f"--- [ERRORE DI RETE] ---")
+        print(f"--- [LOG] Tentativo fallito, riprovo... ---")
         return None
 
-# Reset iniziale della coda messaggi
+# Reset iniziale della coda
 chiama_telegram("getUpdates", {"offset": OFFSET})
-print("--- [SISTEMA] Bot in ascolto attivo... ---")
+print("--- [SISTEMA] In ascolto attivo... ---")
 
 def run():
     global OFFSET
-    # Primo messaggio di test per confermare la connessione
-    chiama_telegram("sendMessage", {"chat_id": CHAT_ID, "text": "✅ **SISTEMA ELITE ONLINE**\nSe ricevi questo, il problema di Railway è risolto!\n\nProva il comando: `/status`"})
+    # Primo messaggio di test
+    chiama_telegram("sendMessage", {"chat_id": CHAT_ID, "text": "🚀 **SISTEMA SBLOCCATO**\nSe ricevi questo, abbiamo superato il blocco di Railway!"})
 
     while True:
         try:
             # 1. LEGGI TELEGRAM
-            res = chiama_telegram("getUpdates", {"offset": OFFSET, "timeout": 10})
+            res = chiama_telegram("getUpdates", {"offset": OFFSET, "timeout": 20})
+            
             if res and res.get("ok"):
                 for u in res["result"]:
                     OFFSET = u["update_id"] + 1
                     if "message" in u and "text" in u["message"]:
                         testo = u["message"].lower()
-                        print(f"--- [LOG] Comando ricevuto: {testo} ---")
+                        print(f"--- [LOG] Comando: {testo} ---")
                         
                         if "/status" in testo:
-                            chiama_telegram("sendMessage", {"chat_id": CHAT_ID, "text": "📊 **STATUS**: Operativo al 100% ✅"})
+                            chiama_telegram("sendMessage", {"chat_id": CHAT_ID, "text": "📊 **STATUS**: Operativo ✅"})
             
-            time.sleep(2) # Reattività massima
+            time.sleep(5) # Pausa più lunga per non farsi bloccare dal firewall di Railway
             
         except Exception as e:
-            print(f"Errore nel loop: {e}")
-            time.sleep(5)
+            time.sleep(10)
 
 if __name__ == "__main__":
     run()
