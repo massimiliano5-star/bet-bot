@@ -13,33 +13,59 @@ CHAT_ID = "IL_TUO_CHAT_ID"
 FILE = "tracking.csv"
 LAST_UPDATE_ID = None
 
-# ===== INIT FILE =====
+# ===== CREA FILE TRACK =====
 if not os.path.exists(FILE):
     with open(FILE, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["data", "match", "quota", "stake", "esito", "profitto"])
 
-# ===== TELEGRAM =====
+# ===== TELEGRAM SEND =====
 def send(msg):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+        requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
+    except Exception as e:
+        print("Errore invio Telegram:", e)
 
+# ===== TELEGRAM READ (ANTI-CRASH) =====
 def read_msgs():
     global LAST_UPDATE_ID
+
     url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
-    res = requests.get(url).json()
 
-    msgs = []
+    try:
+        response = requests.get(url, timeout=10)
 
-    for u in res["result"]:
-        uid = u["update_id"]
+        if response.status_code != 200:
+            print("Errore HTTP:", response.status_code)
+            return []
 
-        if LAST_UPDATE_ID is None or uid > LAST_UPDATE_ID:
-            LAST_UPDATE_ID = uid
-            if "message" in u:
-                msgs.append(u["message"].get("text", "").upper())
+        data = response.json()
 
-    return msgs
+        if not data.get("ok"):
+            print("Errore Telegram:", data)
+            return []
+
+        updates = data.get("result", [])
+        msgs = []
+
+        for u in updates:
+            uid = u.get("update_id")
+
+            if LAST_UPDATE_ID is None or uid > LAST_UPDATE_ID:
+                LAST_UPDATE_ID = uid
+
+                message = u.get("message")
+                if message:
+                    text = message.get("text", "")
+                    if text:
+                        msgs.append(text.upper())
+
+        return msgs
+
+    except Exception as e:
+        print("Errore lettura Telegram:", e)
+        return []
 
 # ===== TIME =====
 def now():
@@ -49,9 +75,12 @@ def now():
 # ===== BANKROLL =====
 def bankroll():
     profit = 0
-    with open(FILE, "r") as f:
-        for row in csv.DictReader(f):
-            profit += float(row["profitto"])
+    try:
+        with open(FILE, "r") as f:
+            for row in csv.DictReader(f):
+                profit += float(row["profitto"])
+    except:
+        pass
     return 50 + profit
 
 # ===== STAKE DINAMICO =====
@@ -76,23 +105,26 @@ def salva(esito):
     if not ultima_bet:
         return
 
-    q = ultima_bet["quota"]
-    s = ultima_bet["stake"]
+    quota = ultima_bet["quota"]
+    stake = ultima_bet["stake"]
     match = ultima_bet["match"]
 
-    profit = s * (q - 1) if esito == "WIN" else -s
+    profit = stake * (quota - 1) if esito == "WIN" else -stake
 
-    with open(FILE, "a", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([now(), match, q, s, esito, profit])
+    try:
+        with open(FILE, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([now(), match, quota, stake, esito, profit])
+    except Exception as e:
+        print("Errore salvataggio:", e)
 
-    send(f"📊 {esito}\n💰 {round(profit,2)}€\n🏦 Bank: {round(bankroll(),2)}€")
+    send(f"📊 {esito}\n💰 Profitto: {round(profit,2)}€\n🏦 Bankroll: {round(bankroll(),2)}€")
 
     ultima_bet = None
 
-# ===== ANALISI PRO =====
+# ===== ANALISI =====
 def analizza():
-    url = f"https://api.the-odds-api.com/v4/sports/soccer/odds/"
+    url = "https://api.the-odds-api.com/v4/sports/soccer/odds/"
     params = {
         "apiKey": API_KEY,
         "regions": "eu",
@@ -105,6 +137,11 @@ def analizza():
 
     try:
         r = requests.get(url, params=params, timeout=10)
+
+        if r.status_code != 200:
+            print("Errore API odds:", r.status_code)
+            return None
+
         data = r.json()
 
         for m in data:
@@ -119,9 +156,8 @@ def analizza():
                 else:
                     team, quota, opp = t2["name"], q2, q1
 
-                # FILTRO ULTRA
+                # FILTRO PRO
                 if 1.20 <= quota <= 1.50 and opp >= 3.2:
-
                     score = (opp - quota) * (1.6 - quota)
 
                     if score > best_score:
@@ -135,57 +171,62 @@ def analizza():
             except:
                 continue
 
-    except:
+    except Exception as e:
+        print("Errore analisi:", e)
         return None
 
     return best
 
 # ===== STATUS =====
 def status():
-    send(f"📊 BANKROLL: {round(bankroll(),2)}€")
+    send(f"📊 Bankroll attuale: {round(bankroll(),2)}€")
 
 # ===== LOOP =====
 def run():
     global ultima_bet
 
-    send("🚀 BOT ELITE MAX ATTIVO")
+    send("🚀 BOT ELITE ATTIVO")
 
     while True:
+        try:
+            # LEGGI COMANDI
+            msgs = read_msgs()
 
-        # comandi telegram
-        msgs = read_msgs()
+            for m in msgs:
+                if m == "WIN":
+                    salva("WIN")
+                elif m == "LOSS":
+                    salva("LOSS")
+                elif m == "STATUS":
+                    status()
 
-        for m in msgs:
-            if m == "WIN":
-                salva("WIN")
-            elif m == "LOSS":
-                salva("LOSS")
-            elif m == "STATUS":
-                status()
+            # NUOVA BET
+            if ultima_bet is None:
+                bet = analizza()
 
-        # nuova bet
-        if ultima_bet is None:
-            bet = analizza()
+                if bet:
+                    stake = calc_stake()
 
-            if bet:
-                s = calc_stake()
+                    ultima_bet = {
+                        "match": bet["match"],
+                        "quota": bet["quota"],
+                        "stake": stake
+                    }
 
-                ultima_bet = {
-                    "match": bet["match"],
-                    "quota": bet["quota"],
-                    "stake": s
-                }
+                    send(
+                        f"🔥 BET ELITE\n"
+                        f"{bet['match']}\n"
+                        f"👉 {bet['team']}\n"
+                        f"Quota: {bet['quota']}\n"
+                        f"💰 Stake: {stake}€\n\n"
+                        f"Scrivi WIN o LOSS dopo"
+                    )
 
-                send(
-                    f"🔥 BET ELITE\n"
-                    f"{bet['match']}\n"
-                    f"👉 {bet['team']}\n"
-                    f"Quota: {bet['quota']}\n"
-                    f"💰 Stake: {s}€\n\n"
-                    f"Scrivi WIN / LOSS dopo"
-                )
+            time.sleep(60)
 
-        time.sleep(60)
+        except Exception as e:
+            print("Errore loop:", e)
+            time.sleep(30)
 
 # ===== START =====
 run()
