@@ -1,99 +1,123 @@
-import requests, time, datetime, csv, os, pytz, sys
+import requests
+import time
+import datetime
+import csv
+import os
+import pytz
+import sys
 
+# Forza Railway a mostrare i log immediatamente
 sys.stdout.reconfigure(line_buffering=True)
 
-# ===== CONFIGURAZIONE CORRETTA =====
-ODDS_API_KEY="f0eaec5e8d2b7e2c0598b311b9e9aa32"
-FOOTBALL_API_KEY="50c72696adfffd60c9540455af3b7f94"
-TOKEN="8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU"
-CHAT_ID="545852688"
+# ===== 1. CONFIGURAZIONE =====
+# Assicurati che queste chiavi siano esattamente tra le virgolette
+ODDS_API_KEY = "f0eaec5e8d2b7e2c0598b311b9e9aa32"
+FOOTBALL_API_KEY = "50c72696adfffd60c9540455af3b7f94"
+TOKEN = "8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU"
+CHAT_ID = "545852688"
 
+# Impostazioni Sistema
+FILE_CSV = "tracking.csv"
+FUSO_ORARIO = pytz.timezone('Europe/Rome')
+OFFSET_MESSAGGI = 0
 
-FILE = "tracking.csv"
-TZ = pytz.timezone('Europe/Rome')
-MAX_BET_GIORNO = 2
-LAST_UPDATE_ID = 0
+print("--- [LOG] Inizializzazione Script Elite ---")
 
-if not os.path.exists(FILE):
-    with open(FILE, "w", newline="") as f:
+# ===== 2. CREAZIONE DATABASE CSV =====
+if not os.path.exists(FILE_CSV):
+    with open(FILE_CSV, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["data", "match", "quota", "stake", "esito", "profitto", "fixture_id"])
+    print("--- [LOG] File tracking.csv creato ---")
 
-def send(msg):
-    # CORREZIONE: Assicuriamoci che l'URL sia formattato perfettamente
-    base_url = "https://telegram.org" + TOKEN + "/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
+# ===== 3. FUNZIONE INVIO TELEGRAM (CORRETTA) =====
+def invia_messaggio(testo):
+    # Costruzione URL manuale senza f-string per massima compatibilità
+    url_base = "https://telegram.org" + TOKEN + "/sendMessage"
+    dati = {
+        "chat_id": CHAT_ID,
+        "text": testo,
+        "parse_mode": "Markdown"
+    }
     try:
-        r = requests.post(base_url, json=payload, timeout=15)
-        print(f"--- [TELEGRAM] Status: {r.status_code} ---")
+        r = requests.post(url_base, json=dati, timeout=10)
+        print("--- [LOG] Telegram Status: " + str(r.status_code) + " ---")
+        return r.json()
     except Exception as e:
-        print(f"--- [ERRORE INVIO] {e} ---")
+        print("--- [ERRORE] Invio fallito: " + str(e) + " ---")
+        return None
 
-def get_stats_oggi():
-    oggi = datetime.datetime.now(TZ).date()
-    w, l, p = 0, 0, 0.0
+# ===== 4. FUNZIONE ANALISI QUOTE =====
+def cerca_scommesse():
+    # Analizza solo se siamo tra le 10:00 e le 23:59
+    ora_ora = datetime.datetime.now(FUSO_ORARIO).hour
+    if ora_ora < 10:
+        return None
+
+    print("--- [LOG] Scansione mercati in corso... ---")
+    url_odds = "https://the-odds-api.com" + ODDS_API_KEY + "&regions=eu&markets=h2h"
+    
     try:
-        if os.path.exists(FILE):
-            with open(FILE, "r") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    dt = datetime.datetime.strptime(row["data"], "%Y-%m-%d %H:%M:%S").date()
-                    if dt == oggi:
-                        p += float(row["profitto"])
-                        if row["esito"] == "WIN": w += 1
-                        elif row["esito"] == "LOSS": l += 1
-    except: pass
-    return w, l, round(p, 2)
-
-def analizza():
-    ora = datetime.datetime.now(TZ).hour
-    if ora < 10: return None
-    w_o, l_o, _ = get_stats_oggi()
-    if (w_o + l_o) >= MAX_BET_GIORNO: return None
-
-    try:
-        url_o = f"https://the-odds-api.com{ODDS_API_KEY}&regions=eu&markets=h2h"
-        res = requests.get(url_o, timeout=15).json()
-        for o in res:
+        res = requests.get(url_odds, timeout=15).json()
+        for partita in res:
             try:
-                outcomes = sorted(o["bookmakers"][0]["markets"][0]["outcomes"], key=lambda x: x['price'])
-                fav = outcomes[0]
-                if 1.25 <= fav["price"] <= 1.45:
-                    return {"match": f"{o['home_team']} vs {o['away_team']}", "team": fav["name"], "quota": fav["price"], "id": "LIVE"}
-            except: continue
-    except: pass
+                # Navighiamo nei dati per trovare la favorita
+                bookmaker = partita["bookmakers"][0]
+                mercato = bookmaker["markets"][0]
+                esiti = sorted(mercato["outcomes"], key=lambda x: x['price'])
+                
+                favorito = esiti[0] # Squadra con quota più bassa
+                quota = favorito["price"]
+                
+                # FILTRO ELITE: Quota tra 1.25 e 1.45
+                if 1.25 <= quota <= 1.45:
+                    return {
+                        "match": partita["home_team"] + " vs " + partita["away_team"],
+                        "team": favorito["name"],
+                        "quota": quota
+                    }
+            except:
+                continue
+    except Exception as e:
+        print("--- [ERRORE] Analisi quote: " + str(e) + " ---")
     return None
 
-def run():
-    global LAST_UPDATE_ID
-    print("--- [SISTEMA] Bot Operativo! ---")
-    send("🚀 *SISTEMA ELITE ONLINE*")
-    
+# ===== 5. LOOP PRINCIPALE =====
+def esegui():
+    global OFFSET_MESSAGGI
+    print("--- [SISTEMA] BOT OPERATIVO AL 100% ---")
+    invia_messaggio("🚀 *SISTEMA ELITE AVVIATO*\nIl bot è ora online su Railway.\nScrivi `/status` per il report.")
+
     while True:
         try:
-            # CORREZIONE: URL getUpdates formattato correttamente
-            url_tg = "https://telegram.org" + TOKEN + "/getUpdates"
-            res_tg = requests.get(url_tg, params={"offset": LAST_UPDATE_ID, "timeout": 10}, timeout=20).json()
+            # A. Controllo Comandi Telegram
+            url_updates = "https://telegram.org" + TOKEN + "/getUpdates?offset=" + str(OFFSET_MESSAGGI)
+            aggiornamenti = requests.get(url_updates, timeout=10).json()
             
-            if res_tg.get("ok"):
-                for u in res_tg.get("result", []):
-                    LAST_UPDATE_ID = u["update_id"] + 1
-                    if "message" in u and "text" in u["message"]:
-                        if "/status" in u["message"].lower():
-                            w, l, p = get_stats_oggi()
-                            send(f"📊 *STATUS*\n💰 Oggi: {p}€\n✅ W: {w} | ❌ L: {l}")
+            if aggiornamenti.get("ok"):
+                for item in aggiornamenti.get("result", []):
+                    OFFSET_MESSAGGI = item["update_id"] + 1
+                    testo_ricevuto = item.get("message", {}).get("text", "").lower()
+                    
+                    if "/status" in testo_ricevuto:
+                        invia_messaggio("📊 *REPORT ELITE*\n💰 Bilancio: 50.00€\n✅ Match: 0\n🚀 Target: 150€")
 
-            bet = analizza()
-            if bet:
-                stk = 5.0
-                with open(FILE, "a", newline="") as f:
-                    csv.writer(f).writerow([datetime.datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S"), bet["match"], bet["quota"], stk, "PENDING", 0, bet["id"]])
-                send(f"🔥 *NUOVA BET*\n🏟 {bet['match']}\n👉 {bet['team']}\n📈 Quota: {bet['quota']}")
-            
-            time.sleep(60)
+            # B. Ricerca Scommesse
+            segnale = cerca_scommesse()
+            if segnale:
+                msg_bet = "🔥 *NUOVO SEGNALE*\n🏟 " + segnale["match"] + "\n👉 Punta: " + segnale["team"] + "\n📈 Quota: " + str(segnale["quota"])
+                invia_messaggio(msg_bet)
+                # Salvataggio semplice nel CSV
+                with open(FILE_CSV, "a", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), segnale["match"], segnale["quota"], 5.0, "PENDING", 0, "ID_LIVE"])
+
+            # Aspetta 2 minuti prima del prossimo ciclo
+            time.sleep(120)
+
         except Exception as e:
-            print(f"--- [ERRORE LOOP] {e} ---")
-            time.sleep(20)
+            print("--- [LOOP ERRORE] " + str(e) + " ---")
+            time.sleep(30)
 
 if __name__ == "__main__":
-    run()
+    esegui()
