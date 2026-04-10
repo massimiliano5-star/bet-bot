@@ -2,152 +2,156 @@ import requests
 import time
 import datetime
 import pytz
+import csv
+import os
 
 # ===== CONFIG =====
 API_KEY = "LA_TUA_API_KEY"
 TOKEN = "IL_TUO_TELEGRAM_TOKEN"
 CHAT_ID = "IL_TUO_CHAT_ID"
 
-MAX_BET_GIORNO = 2
+FILE_TRACK = "tracking.csv"
 
-# ===== LOG =====
-def log(msg):
-    print(msg, flush=True)
+# ===== INIT FILE =====
+if not os.path.exists(FILE_TRACK):
+    with open(FILE_TRACK, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["data", "tipo", "match", "quota", "stake", "esito", "profitto"])
 
 # ===== TELEGRAM =====
-def send_telegram(msg):
+def send(msg):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    requests.post(url, json={
-        "chat_id": CHAT_ID,
-        "text": msg
-    })
+    requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
 
-# ===== ORARIO =====
-def è_orario_di_lavoro():
-    tz = pytz.timezone('Europe/Rome')
-    ora = datetime.datetime.now(tz).hour
-    return 8 <= ora <= 23
+# ===== TIME =====
+def now():
+    tz = pytz.timezone("Europe/Rome")
+    return datetime.datetime.now(tz)
 
-# ===== CAMPIONATI =====
-CATEGORIE = [
-    "soccer_epl", "soccer_italy_serie_a", "soccer_spain_la_liga",
-    "soccer_germany_bundesliga", "soccer_france_ligue_1",
-    "soccer_uefa_champs_league"
-]
+# ===== BANKROLL =====
+def get_bankroll():
+    profit = 0
+    with open(FILE_TRACK, "r") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            profit += float(row["profitto"])
+    return 50 + profit
 
-# ===== ANALISI MIGLIORATA =====
-def analizza_lega(sport_key):
-    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/"
-    
-    params = {
-        'apiKey': API_KEY,
-        'regions': 'eu',
-        'markets': 'h2h',
-        'oddsFormat': 'decimal'
-    }
+def stake():
+    return round(get_bankroll() * 0.05, 2)
+
+# ===== TRACK =====
+def salva(tipo, match, quota, stake, esito):
+    profit = stake * (quota - 1) if esito == "WIN" else -stake
+
+    with open(FILE_TRACK, "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            now(),
+            tipo,
+            match,
+            quota,
+            stake,
+            esito,
+            profit
+        ])
+
+# ===== ANALISI =====
+def analizza():
+    leagues = [
+        "soccer_epl",
+        "soccer_italy_serie_a",
+        "soccer_spain_la_liga"
+    ]
 
     risultati = []
 
-    try:
-        r = requests.get(url, params=params, timeout=10)
-        if r.status_code != 200:
-            return []
+    for league in leagues:
+        url = f"https://api.the-odds-api.com/v4/sports/{league}/odds/"
+        params = {
+            "apiKey": API_KEY,
+            "regions": "eu",
+            "markets": "h2h",
+            "oddsFormat": "decimal"
+        }
 
-        data = r.json()
+        try:
+            r = requests.get(url, params=params, timeout=10)
+            data = r.json()
 
-        for match in data:
-            try:
-                odds = match['bookmakers'][0]['markets'][0]['outcomes']
+            for m in data:
+                odds = m["bookmakers"][0]["markets"][0]["outcomes"]
 
-                if len(odds) < 2:
-                    continue
+                t1, t2 = odds[0], odds[1]
+                q1, q2 = t1["price"], t2["price"]
 
-                t1 = odds[0]
-                t2 = odds[1]
-
-                q1 = t1['price']
-                q2 = t2['price']
-
-                # favorita reale
                 if q1 < q2:
-                    favorita = t1['name']
-                    quota = q1
-                    sfavorita = q2
+                    team, quota, opp = t1["name"], q1, q2
                 else:
-                    favorita = t2['name']
-                    quota = q2
-                    sfavorita = q1
+                    team, quota, opp = t2["name"], q2, q1
 
-                # ===== FILTRO PRO =====
-                if 1.20 <= quota <= 1.50:
-                    if sfavorita >= 3.00:  # grande differenza reale
-                        score = sfavorita - quota  # qualità bet
+                if 1.20 <= quota <= 1.50 and opp >= 3:
+                    score = opp - quota
 
-                        risultati.append({
-                            "match": f"{match['home_team']} vs {match['away_team']}",
-                            "team": favorita,
-                            "quota": quota,
-                            "score": score
-                        })
+                    risultati.append({
+                        "match": f"{m['home_team']} vs {m['away_team']}",
+                        "team": team,
+                        "quota": quota,
+                        "score": score
+                    })
 
-            except:
-                continue
+        except:
+            continue
 
-    except:
-        return []
+    risultati.sort(key=lambda x: x["score"], reverse=True)
+    return risultati[:2]
 
-    return risultati
+# ===== LIVE =====
+def live():
+    # simulazione migliorata logica live
+    return [{
+        "match": "LIVE 0-0 60min",
+        "bet": "Over 0.5",
+        "quota": 1.30
+    }]
 
-# ===== SELEZIONE TOP =====
-def seleziona_top_bet(tutte_le_bet):
-    # ordina per qualità (differenza quota)
-    tutte_le_bet.sort(key=lambda x: x['score'], reverse=True)
-
-    return tutte_le_bet[:MAX_BET_GIORNO]
+# ===== REPORT =====
+def report():
+    bank = get_bankroll()
+    send(f"📊 BANKROLL ATTUALE: {round(bank,2)}€")
 
 # ===== LOOP =====
-def run_bot():
+def run():
     ultimo_giorno = None
 
     while True:
-        if è_orario_di_lavoro():
-            oggi = datetime.date.today()
+        oggi = now().date()
 
-            # manda solo una volta al giorno
-            if oggi != ultimo_giorno:
+        if oggi != ultimo_giorno:
 
-                log("🔍 Analisi giornaliera...")
+            bets = analizza()
+            s = stake()
 
-                tutte_le_bet = []
+            send(f"🔥 BET ELITE\n💰 Stake: {s}€")
 
-                for lega in CATEGORIE:
-                    bets = analizza_lega(lega)
-                    tutte_le_bet.extend(bets)
-                    time.sleep(1)
+            for b in bets:
+                send(
+                    f"\n⚽ {b['match']}\n"
+                    f"👉 {b['team']}\n"
+                    f"Quota: {b['quota']}"
+                )
 
-                top_bets = seleziona_top_bet(tutte_le_bet)
+            for l in live():
+                send(
+                    f"\n⚡ LIVE\n{l['match']}\n{l['bet']} @ {l['quota']}"
+                )
 
-                if top_bets:
-                    send_telegram("🔥 TOP 2 BET DEL GIORNO 🔥")
+            report()
 
-                    for b in top_bets:
-                        msg = (
-                            f"\n⚽ {b['match']}\n"
-                            f"👉 {b['team']}\n"
-                            f"💰 Quota: {b['quota']}"
-                        )
-                        send_telegram(msg)
-                else:
-                    send_telegram("❌ Nessuna bet sicura trovata oggi")
+            ultimo_giorno = oggi
 
-                ultimo_giorno = oggi
-
-            time.sleep(1800)  # controlla ogni 30 min
-
-        else:
-            log("🌙 Modalità notte")
-            time.sleep(1800)
+        time.sleep(1800)
 
 # ===== START =====
-log("🚀 BOT PRO ATTIVO (MAX 2 BET/GIORNO)")
-run_bot()
+send("🚀 BOT ELITE ATTIVO")
+run()
