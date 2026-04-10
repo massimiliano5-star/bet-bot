@@ -6,22 +6,41 @@ import csv
 import os
 
 # ===== CONFIG =====
-API_KEY = "LA_TUA_API_KEY"
-TOKEN = "IL_TUO_TELEGRAM_TOKEN"
-CHAT_ID = "IL_TUO_CHAT_ID"
+API_KEY = "LA_TUA_API_KEY_ODDS"
+FOOTBALL_API_KEY = "LA_TUA_API_KEY_FOOTBALL"
+TOKEN = "TELEGRAM_TOKEN"
+CHAT_ID = "CHAT_ID"
 
-FILE_TRACK = "tracking.csv"
+FILE = "tracking.csv"
+LAST_UPDATE_ID = None
+ultima_bet = None
 
 # ===== INIT FILE =====
-if not os.path.exists(FILE_TRACK):
-    with open(FILE_TRACK, "w", newline="") as f:
+if not os.path.exists(FILE):
+    with open(FILE, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["data", "tipo", "match", "quota", "stake", "esito", "profitto"])
+        writer.writerow(["data", "match", "quota", "stake", "esito", "profitto"])
 
 # ===== TELEGRAM =====
 def send(msg):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
+
+def read_msgs():
+    global LAST_UPDATE_ID
+    url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+    res = requests.get(url).json()
+
+    msgs = []
+    for u in res["result"]:
+        uid = u["update_id"]
+
+        if LAST_UPDATE_ID is None or uid > LAST_UPDATE_ID:
+            LAST_UPDATE_ID = uid
+            if "message" in u:
+                msgs.append(u["message"].get("text", "").upper())
+
+    return msgs
 
 # ===== TIME =====
 def now():
@@ -29,129 +48,212 @@ def now():
     return datetime.datetime.now(tz)
 
 # ===== BANKROLL =====
-def get_bankroll():
+def bankroll():
     profit = 0
-    with open(FILE_TRACK, "r") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
+    with open(FILE, "r") as f:
+        for row in csv.DictReader(f):
             profit += float(row["profitto"])
     return 50 + profit
 
-def stake():
-    return round(get_bankroll() * 0.05, 2)
+# ===== STAKE SAFE =====
+def calc_stake():
+    bank = bankroll()
+
+    if bank < 60:
+        perc = 0.02
+    elif bank < 100:
+        perc = 0.03
+    else:
+        perc = 0.04
+
+    return round(bank * perc, 2)
 
 # ===== TRACK =====
-def salva(tipo, match, quota, stake, esito):
-    profit = stake * (quota - 1) if esito == "WIN" else -stake
+def salva(esito):
+    global ultima_bet
 
-    with open(FILE_TRACK, "a", newline="") as f:
+    if not ultima_bet:
+        return
+
+    q = ultima_bet["quota"]
+    s = ultima_bet["stake"]
+    match = ultima_bet["match"]
+
+    profit = s * (q - 1) if esito == "WIN" else -s
+
+    with open(FILE, "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            now(),
-            tipo,
-            match,
-            quota,
-            stake,
-            esito,
-            profit
-        ])
+        writer.writerow([now(), match, q, s, esito, profit])
 
-# ===== ANALISI =====
+    send(f"📊 {esito}\n💰 {round(profit,2)}€\n🏦 Bank: {round(bankroll(),2)}€")
+
+    ultima_bet = None
+
+# ===== PRENDI STATISTICHE REALI =====
+def get_team_stats(team_name):
+    try:
+        url = "https://api.football-data.org/v4/teams"
+        headers = {"X-Auth-Token": FOOTBALL_API_KEY}
+        r = requests.get(url, headers=headers, timeout=10)
+        data = r.json()
+
+        # ⚠️ semplificato (serve mapping vero team → id)
+        for t in data["teams"]:
+            if team_name.lower() in t["name"].lower():
+                team_id = t["id"]
+
+                # ultime partite
+                url2 = f"https://api.football-data.org/v4/teams/{team_id}/matches?limit=5"
+                r2 = requests.get(url2, headers=headers, timeout=10)
+                matches = r2.json()["matches"]
+
+                wins = 0
+                goals_for = 0
+                goals_against = 0
+
+                for m in matches:
+                    if m["score"]["winner"] == "HOME_TEAM":
+                        wins += 1
+                    goals_for += m["score"]["fullTime"]["home"] or 0
+                    goals_against += m["score"]["fullTime"]["away"] or 0
+
+                form = wins / 5
+                attack = goals_for / 5
+                defense = goals_against / 5
+
+                return form, attack, defense
+
+    except:
+        pass
+
+    return None, None, None
+
+# ===== ANALISI COMPLETA =====
 def analizza():
-    leagues = [
-        "soccer_epl",
-        "soccer_italy_serie_a",
-        "soccer_spain_la_liga"
-    ]
+    url = f"https://api.the-odds-api.com/v4/sports/soccer/odds/"
+    params = {
+        "apiKey": API_KEY,
+        "regions": "eu",
+        "markets": "h2h",
+        "oddsFormat": "decimal"
+    }
 
-    risultati = []
+    best = None
+    best_ev = 0
 
-    for league in leagues:
-        url = f"https://api.the-odds-api.com/v4/sports/{league}/odds/"
-        params = {
-            "apiKey": API_KEY,
-            "regions": "eu",
-            "markets": "h2h",
-            "oddsFormat": "decimal"
-        }
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        data = r.json()
 
-        try:
-            r = requests.get(url, params=params, timeout=10)
-            data = r.json()
-
-            for m in data:
+        for m in data:
+            try:
                 odds = m["bookmakers"][0]["markets"][0]["outcomes"]
 
                 t1, t2 = odds[0], odds[1]
                 q1, q2 = t1["price"], t2["price"]
 
                 if q1 < q2:
-                    team, quota, opp = t1["name"], q1, q2
+                    team, quota, opp, opponent = t1["name"], q1, q2, t2["name"]
                 else:
-                    team, quota, opp = t2["name"], q2, q1
+                    team, quota, opp, opponent = t2["name"], q2, q1, t1["name"]
 
-                if 1.20 <= quota <= 1.50 and opp >= 3:
-                    score = opp - quota
+                # ===== FILTRO QUOTA =====
+                if not (1.20 <= quota <= 1.45):
+                    continue
 
-                    risultati.append({
+                if opp < 3.0:
+                    continue
+
+                # ===== DATI REALI =====
+                tf, ta, td = get_team_stats(team)
+                of, oa, od = get_team_stats(opponent)
+
+                if None in (tf, ta, td, of, oa, od):
+                    continue
+
+                # ===== MODELLO STATISTICO =====
+                strength = (tf * 2 + ta) - (of * 2 + od)
+
+                if strength < 1.2:
+                    continue
+
+                # ===== PROBABILITÀ STIMATA =====
+                prob = min(max(0.5 + (strength / 4), 0), 0.9)
+
+                # ===== VALUE BETTING =====
+                ev = (prob * quota) - 1
+
+                if ev < 0.05:
+                    continue
+
+                # ===== ANTI-RISCHIO =====
+                if quota < 1.30 and strength < 1.8:
+                    continue
+
+                if ev > best_ev:
+                    best_ev = ev
+                    best = {
                         "match": f"{m['home_team']} vs {m['away_team']}",
                         "team": team,
                         "quota": quota,
-                        "score": score
-                    })
+                        "ev": round(ev, 3),
+                        "prob": round(prob, 2)
+                    }
 
-        except:
-            continue
+            except:
+                continue
 
-    risultati.sort(key=lambda x: x["score"], reverse=True)
-    return risultati[:2]
+    except:
+        return None
 
-# ===== LIVE =====
-def live():
-    # simulazione migliorata logica live
-    return [{
-        "match": "LIVE 0-0 60min",
-        "bet": "Over 0.5",
-        "quota": 1.30
-    }]
+    return best
 
-# ===== REPORT =====
-def report():
-    bank = get_bankroll()
-    send(f"📊 BANKROLL ATTUALE: {round(bank,2)}€")
+# ===== STATUS =====
+def status():
+    send(f"📊 BANKROLL: {round(bankroll(),2)}€")
 
 # ===== LOOP =====
 def run():
-    ultimo_giorno = None
+    global ultima_bet
+
+    send("🚀 BOT AVANZATO ATTIVO")
 
     while True:
-        oggi = now().date()
 
-        if oggi != ultimo_giorno:
+        msgs = read_msgs()
 
-            bets = analizza()
-            s = stake()
+        for m in msgs:
+            if m == "WIN":
+                salva("WIN")
+            elif m == "LOSS":
+                salva("LOSS")
+            elif m == "STATUS":
+                status()
 
-            send(f"🔥 BET ELITE\n💰 Stake: {s}€")
+        if ultima_bet is None:
+            bet = analizza()
 
-            for b in bets:
+            if bet:
+                s = calc_stake()
+
+                ultima_bet = {
+                    "match": bet["match"],
+                    "quota": bet["quota"],
+                    "stake": s
+                }
+
                 send(
-                    f"\n⚽ {b['match']}\n"
-                    f"👉 {b['team']}\n"
-                    f"Quota: {b['quota']}"
+                    f"🔥 BET SELEZIONATA\n"
+                    f"{bet['match']}\n"
+                    f"👉 {bet['team']}\n"
+                    f"Quota: {bet['quota']}\n"
+                    f"📊 Prob: {bet['prob']}\n"
+                    f"💰 EV: {bet['ev']}\n"
+                    f"💸 Stake: {s}€\n\n"
+                    f"Scrivi WIN / LOSS"
                 )
 
-            for l in live():
-                send(
-                    f"\n⚡ LIVE\n{l['match']}\n{l['bet']} @ {l['quota']}"
-                )
-
-            report()
-
-            ultimo_giorno = oggi
-
-        time.sleep(1800)
+        time.sleep(60)
 
 # ===== START =====
-send("🚀 BOT ELITE ATTIVO")
 run()
