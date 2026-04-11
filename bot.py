@@ -1,119 +1,37 @@
-import requests
-import csv
 import time
-import datetime
+import requests
+import joblib
 import os
-import math
 
-# ================= CONFIG =================
-ODDS_API_KEY = "f0eaec5e8d2b7e2c0598b311b9e9aa32"
-FOOTBALL_API_KEY = "50c72696adfffd60c9540455af3b7f9a"
-TOKEN = "8649464893:AAHr0VkMebISJSqa-TKV0XIZxbZPjJ7LzyU"
-CHAT_ID = "545852688"
+# ================= CONFIG (RAILWAY ENV) =================
+ODDS_API_KEY = os.getenv("ODDS_API_KEY")
+FOOTBALL_API_KEY = os.getenv("FOOTBALL_API_KEY")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-BANKROLL_BASE = 50
-
-TRACK_FILE = "track.csv"
-MAX_POSITIONS = 3
-MAX_DAILY_LOSS = 0.15  # 15%
-
-open_positions = []
-
-# ================= INIT =================
-if not os.path.exists(TRACK_FILE):
-    with open(TRACK_FILE, "w", newline="") as f:
-        csv.writer(f).writerow(["time","match","quota","stake","result","profit"])
+BANKROLL = 50
+MAX_STAKE = 0.08
 
 # ================= TELEGRAM =================
 def send(msg):
     try:
         requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": msg}
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}
         )
     except:
         pass
 
-# ================= BANKROLL =================
-def bankroll():
-    profit = 0
-    try:
-        with open(TRACK_FILE) as f:
-            for r in csv.DictReader(f):
-                profit += float(r["profit"])
-    except:
-        pass
-    return BANKROLL_BASE + profit
-
-# ================= METRICS =================
-def metrics(window=50):
-    try:
-        with open(TRACK_FILE) as f:
-            rows = list(csv.DictReader(f))[-window:]
-
-        wins = sum(1 for r in rows if r["result"] == "WIN")
-        total = len(rows)
-        profit = sum(float(r["profit"]) for r in rows)
-
-        return (wins/total if total else 0), profit
-    except:
-        return 0, 0
-
-def drawdown():
-    return BANKROLL_BASE - bankroll()
-
-# ================= RISK ENGINE =================
-def risk_check():
-    _, profit = metrics()
-
-    if profit < -BANKROLL_BASE * MAX_DAILY_LOSS:
-        return "STOP"
-
-    if bankroll() < BANKROLL_BASE * 0.5:
-        return "STOP"
-
-    return "OK"
-
 # ================= MODELS =================
-def momentum(h, a):
+def load_model(path):
     try:
-        return (
-            h["shots_on_goal"]*3 + h["dangerous_attacks"]*1.5
-        ) / (a["shots_on_goal"]*3 + a["dangerous_attacks"]*1.5 + 1)
-    except:
-        return 0.5
-
-def value_model(q):
-    return (1 / q) * 1.08
-
-def ensemble(m, v, ai):
-    return m*0.4 + v*0.3 + ai*0.3
-
-# ================= AI SIMPLE =================
-def ai_model(features):
-    return sum(features) / (len(features)+1) * 0.01
-
-# ================= FEATURES =================
-def features(h, a, minute, quota):
-    try:
-        return [
-            h["shots_on_goal"] - a["shots_on_goal"],
-            h["dangerous_attacks"] - a["dangerous_attacks"],
-            int(h["possession"].replace("%","")) - int(a["possession"].replace("%","")),
-            minute,
-            quota
-        ]
+        return joblib.load(path)
     except:
         return None
 
-# ================= STAKE =================
-def stake(prob, quota):
-    edge = prob - (1/quota)
-    if edge <= 0:
-        return 0
-
-    k = min(edge * 2, 0.05)
-    return bankroll() * k
+win_model = load_model("win_model.pkl")
+goal_model = load_model("goal_model.pkl")
+risk_model = load_model("risk_model.pkl")
 
 # ================= API =================
 def get_matches():
@@ -122,107 +40,170 @@ def get_matches():
         "X-RapidAPI-Key": FOOTBALL_API_KEY,
         "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
     }
-    params = {"live": "all"}
 
     try:
-        return requests.get(url, headers=headers, params=params, timeout=10).json().get("response", [])
+        r = requests.get(url, headers=headers, params={"live": "all"}, timeout=10)
+        return r.json().get("response", [])
     except:
         return []
+
 
 def get_odds():
-    url = "https://api.the-odds-api.com/v4/sports/soccer/odds/"
-    params = {"apiKey": ODDS_API_KEY,"regions":"eu","markets":"h2h"}
-
     try:
-        return requests.get(url, params=params, timeout=10).json()
+        r = requests.get(
+            "https://api.the-odds-api.com/v4/sports/soccer/odds",
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "eu",
+                "markets": "h2h"
+            },
+            timeout=10
+        )
+        return r.json()
     except:
         return []
 
-# ================= CORE ENGINE =================
-def find_signals():
-    matches = get_matches()
-    odds = get_odds()
+# ================= FEATURES =================
+def extract(stat, key):
+    try:
+        for s in stat["statistics"]:
+            if key in s["type"].lower():
+                return float(s["value"] or 0)
+    except:
+        pass
+    return 0
 
-    signals = []
 
-    for m in matches:
-        try:
-            minute = m["fixture"]["status"]["elapsed"]
-            if not minute or minute < 60 or minute > 82:
-                continue
+def build_features(h, a, minute, quota):
+    shots = extract(h,"shots on goal") - extract(a,"shots on goal")
+    danger = extract(h,"dangerous attacks") - extract(a,"dangerous attacks")
+    poss = extract(h,"possession") - extract(a,"possession")
+    goals = extract(h,"goals") - extract(a,"goals")
+    reds = extract(h,"red cards") - extract(a,"red cards")
 
-            stats = m.get("statistics")
-            if not stats:
-                continue
+    dominance = shots*2 + danger*1.5 + poss*0.5
 
-            h, a = stats[0], stats[1]
+    return [shots, danger, poss, goals, reds, dominance, minute, quota], dominance
 
-            for o in odds:
-                if m["teams"]["home"]["name"].lower() in o.get("home_team","").lower():
+# ================= STAKE =================
+def stake(prob, quota, risk):
+    edge = prob - (1/quota)
 
-                    if not o.get("bookmakers"):
-                        continue
+    if edge < 0.05:
+        return 0
 
-                    for out in o["bookmakers"][0]["markets"][0]["outcomes"]:
-                        q = out["price"]
+    base = BANKROLL * 0.02
 
-                        f = features(h,a,minute,q)
-                        if not f:
-                            continue
+    if risk > 0.6:
+        base *= 0.4
+    elif risk < 0.3:
+        base *= 1.6
 
-                        ai = ai_model(f)
-                        m1 = momentum(h,a)
-                        v1 = value_model(q)
+    return min(base, BANKROLL * MAX_STAKE)
 
-                        prob = ensemble(m1,v1,ai)
-                        edge = prob - (1/q)
+# ================= DECISION ENGINE =================
+def decide(win_p, goal_p, risk_p, edge, dominance, minute):
 
-                        if edge > 0.12:
-                            signals.append({
-                                "team": out["name"],
-                                "quota": q,
-                                "prob": prob,
-                                "edge": edge,
-                                "minute": minute,
-                                "match": f"{m['teams']['home']['name']} vs {m['teams']['away']['name']}"
-                            })
+    if risk_p > 0.65:
+        return None
 
-        except:
-            continue
+    if dominance < 18:
+        return None
 
-    return sorted(signals, key=lambda x: x["edge"], reverse=True)[:MAX_POSITIONS]
+    if minute < 60 or minute > 83:
+        return None
 
-# ================= EXECUTION =================
+    if goal_p > 0.72:
+        return "GOAL"
+
+    if win_p > 0.67 and edge > 0.06:
+        return "WIN"
+
+    return None
+
+# ================= MAIN LOOP =================
 def run():
-    send("🏦 INSTITUTIONAL FINAL SYSTEM ONLINE")
+
+    send("🚀 BET-BOT ONLINE (RAILWAY DEPLOYED)")
 
     while True:
+
         try:
-            if risk_check() == "STOP":
-                send("🛑 RISK SYSTEM ACTIVATED")
-                time.sleep(3600)
-                continue
+            matches = get_matches()
+            odds = get_odds()
 
-            signals = find_signals()
+            for m in matches:
 
-            for s in signals:
-                st = stake(s["prob"], s["quota"])
-
-                if st <= 0:
+                minute = m["fixture"]["status"]["elapsed"]
+                if not minute:
                     continue
 
-                open_positions.append(st)
+                stats = m.get("statistics")
+                if not stats:
+                    continue
 
-                send(
-                    f"🏦 SIGNAL\n{s['match']}\n{s['team']}\n"
-                    f"⏱ {s['minute']}\nQuota: {s['quota']}\n"
-                    f"Edge: {round(s['edge'],2)}\nStake: {round(st,2)}€"
-                )
+                h, a = stats
+
+                for o in odds:
+
+                    if m["teams"]["home"]["name"].lower() not in o.get("home_team","").lower():
+                        continue
+
+                    try:
+                        outcomes = o["bookmakers"][0]["markets"][0]["outcomes"]
+                    except:
+                        continue
+
+                    for out in outcomes:
+
+                        quota = out["price"]
+
+                        f, dominance = build_features(h,a,minute,quota)
+
+                        win_p = win_model.predict_proba([f])[0][1] if win_model else 0.5
+                        goal_p = goal_model.predict_proba([f])[0][1] if goal_model else 0.5
+                        risk_p = risk_model.predict_proba([f])[0][1] if risk_model else 0.3
+
+                        edge = win_p - (1/quota)
+
+                        decision = decide(
+                            win_p,
+                            goal_p,
+                            risk_p,
+                            edge,
+                            dominance,
+                            minute
+                        )
+
+                        if decision:
+
+                            st = stake(win_p, quota, risk_p)
+
+                            if st <= 0:
+                                continue
+
+                            msg = f"""
+🚀 {decision} SIGNAL
+
+{m['teams']['home']['name']} vs {m['teams']['away']['name']}
+
+📊 WIN: {round(win_p,2)}
+🔥 GOAL: {round(goal_p,2)}
+⚠️ RISK: {round(risk_p,2)}
+📈 EDGE: {round(edge,2)}
+
+💰 STAKE: {round(st,2)}€
+🏦 BANKROLL: {BANKROLL}
+"""
+
+                            send(msg)
 
             time.sleep(60)
 
         except Exception as e:
-            print(e)
-            time.sleep(30)
+            print("ERROR:", e)
+            time.sleep(10)
 
-run()
+
+if __name__ == "__main__":
+    run()
