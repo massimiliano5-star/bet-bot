@@ -93,7 +93,7 @@ def run():
                     continue
 
                 minute = m["fixture"]["status"]["elapsed"]
-                if not minute or minute < 60 or minute > 85:
+                if not minute or minute < 45 or minute > 80:
                     continue
 
                 stats = m.get("statistics")
