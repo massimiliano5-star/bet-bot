@@ -3,31 +3,48 @@ import requests
 import os
 
 # ================= CONFIG (RAILWAY ENV) =================
-# Assicurati che i nomi delle variabili su Railway siano IDENTICI a questi
-ODDS_API_KEY = os.getenv("ODDS_API_KEY")
-FOOTBALL_API_KEY = os.getenv("FOOTBALL_API_KEY")
+# Cambia il nome su Railway: da FOOTBALL_API_KEY a API_FOOTBALL_KEY (per chiarezza)
+API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY") 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 BANKROLL = 50
 SENT_SIGNALS = {} 
 
-# ================= TELEGRAM (CON DEBUG) =================
+# ================= TELEGRAM =================
 def send(msg):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("❌ ERRORE: Variabili Telegram mancanti nelle impostazioni Railway!")
-        return
-
     url = f"https://telegram.org{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
+    try:
+        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=10)
+        print(f"📡 Telegram Response: {r.status_code}")
+    except Exception as e:
+        print(f"❌ Errore Telegram: {e}")
+
+# ================= API FOOTBALL (DIRETTO - NO RAPIDAPI) =================
+def get_matches():
+    # URL DIRETTO di API-Football
+    url = "https://api-sports.io"
+    
+    # HEADER CORRETTO per API-Football
+    headers = {
+        "x-apisports-key": API_FOOTBALL_KEY
+    }
     
     try:
-        r = requests.post(url, json=payload, timeout=10)
-        print(f"📡 Invio Telegram: {r.status_code} - {r.text}")
+        r = requests.get(url, headers=headers, params={"live": "all"}, timeout=10)
+        data = r.json()
+        
+        # Log di debug per vedere se la chiave funziona
+        if "errors" in data and data["errors"]:
+            print(f"❌ Errore API-Football: {data['errors']}")
+            return []
+            
+        return data.get("response", [])
     except Exception as e:
-        print(f"❌ Errore di rete Telegram: {e}")
+        print(f"❌ Errore connessione API: {e}")
+        return []
 
-# ================= LOGICA DI ANALISI =================
+# ================= ANALISI E LOOP =================
 def analyze_pressure(h, a):
     def get_val(stat, key):
         for s in stat.get("statistics", []):
@@ -44,76 +61,39 @@ def analyze_pressure(h, a):
     a_danger = get_val(a, "dangerous attacks")
     h_poss = get_val(h, "possession")
 
-    # Formula semplificata per il test
-    dominance_score = (h_shots - a_shots) * 3 + (h_danger - a_danger) * 1.2 + (h_poss - 50) * 0.5
-    return dominance_score
+    return (h_shots - a_shots) * 3 + (h_danger - a_danger) * 1.2 + (h_poss - 50) * 0.5
 
-# ================= API CALLS =================
-def get_matches():
-    url = "https://rapidapi.com"
-    headers = {
-        "X-RapidAPI-Key": FOOTBALL_API_KEY,
-        "X-RapidAPI-Host": "://rapidapi.com"
-    }
-    try:
-        r = requests.get(url, headers=headers, params={"live": "all"}, timeout=10)
-        return r.json().get("response", [])
-    except Exception as e:
-        print(f"❌ Errore API Football: {e}")
-        return []
-
-# ================= MAIN LOOP =================
 def run():
-    print("--- 🚀 AVVIO BOT IN CORSO ---")
-    send("🚀 BET-BOT ONLINE\nRange: 45'-80'\nStato: Monitoraggio attivo")
+    print("--- 🚀 AVVIO BOT (API-SPORTS DIRETTO) ---")
+    send("🚀 BOT ONLINE\nAPI: Diretta (v3)\nRange: 45'-80'")
     
     while True:
         try:
             matches = get_matches()
-            print(f"🔎 Analizzando {len(matches)} partite live...")
+            print(f"🔎 Partite analizzate: {len(matches)}")
 
             for m in matches:
                 m_id = m["fixture"]["id"]
-                home_n = m["teams"]["home"]["name"]
-                away_n = m["teams"]["away"]["name"]
-
-                if m_id in SENT_SIGNALS:
-                    continue
+                if m_id in SENT_SIGNALS: continue
 
                 minute = m["fixture"]["status"]["elapsed"]
-                
-                # RANGE RICHIESTO: 45-80
-                if not minute or minute < 45 or minute > 80:
-                    continue
+                if not minute or minute < 45 or minute > 80: continue
 
                 stats = m.get("statistics")
-                if not stats or len(stats) < 2:
-                    continue
+                if not stats or len(stats) < 2: continue
 
                 h_stat, a_stat = stats
                 dom_score = analyze_pressure(h_stat, a_stat)
 
-                # SOGLIA DI TEST (abbassata a 15 per vedere se arrivano segnali)
-                decision = None
-                if dom_score > 15:
-                    decision = f"🔥 DOMINIO CASA ({round(dom_score)})"
-                elif dom_score < -15:
-                    decision = f"🔥 DOMINIO OSPITE ({round(abs(dom_score))})"
-
-                if decision:
-                    msg = (f"⚽ SIGNAL: {decision}\n\n"
-                           f"🏆 {home_n} vs {away_n}\n"
-                           f"⏰ Minuto: {minute}'\n"
-                           f"📊 Pressione: {round(dom_score, 1)}")
-                    
+                # Soglia abbassata a 10 per il test live
+                if dom_score > 10:
+                    msg = f"⚽ SIGNAL: CASA DOMINA ({round(dom_score)})\n🏆 {m['teams']['home']['name']} vs {m['teams']['away']['name']}\n⏰ Min: {minute}'"
                     send(msg)
                     SENT_SIGNALS[m_id] = True
-                    print(f"✅ Segnale inviato per {home_n}")
 
             time.sleep(60)
-
         except Exception as e:
-            print(f"❌ Errore nel ciclo principale: {e}")
+            print(f"❌ Errore: {e}")
             time.sleep(20)
 
 if __name__ == "__main__":
